@@ -1,6 +1,10 @@
 import argparse
 import os
 import threading
+import time
+import json
+import shutil
+from pathlib import Path
 
 from dotenv import load_dotenv
 from huggingface_hub import login
@@ -15,14 +19,13 @@ from scripts.text_web_browser import (
     VisitTool,
 )
 from scripts.visual_qa import visualizer
-
+from loader import load_experiment_config, load_agent_models
 from smolagents import (
     CodeAgent,
     GoogleSearchTool,
-    # InferenceClientModel,
-    LiteLLMModel,
     ToolCallingAgent,
 )
+from smolagents.utils import make_json_serializable
 
 
 load_dotenv(override=True)
@@ -36,7 +39,6 @@ def parse_args():
     parser.add_argument(
         "question", type=str, help="for example: 'How many studio albums did Mercedes Sosa release before 2007?'"
     )
-    parser.add_argument("--model-id", type=str, default="o1")
     return parser.parse_args()
 
 
@@ -57,16 +59,17 @@ BROWSER_CONFIG = {
 os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 
-def create_agent(model_id="o1"):
-    model_params = {
-        "model_id": model_id,
-        "custom_role_conversions": custom_role_conversions,
-        "max_completion_tokens": 8192,
-    }
-    if model_id == "o1":
-        model_params["reasoning_effort"] = "high"
-    model = LiteLLMModel(**model_params)
+def get_experiment_folder(experiment_id):
+    base = Path("experiments")
+    folder = base / experiment_id
+    if folder.exists():
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        folder = base / f"{experiment_id}_{timestamp}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
+
+def create_agent(models):
     text_limit = 100000
     browser = SimpleTextBrowser(**BROWSER_CONFIG)
     WEB_TOOLS = [
@@ -77,10 +80,10 @@ def create_agent(model_id="o1"):
         FinderTool(browser),
         FindNextTool(browser),
         ArchiveSearchTool(browser),
-        TextInspectorTool(model, text_limit),
+        TextInspectorTool(models["text_inspector"], text_limit),
     ]
     text_webbrowser_agent = ToolCallingAgent(
-        model=model,
+        model=models["text_inspector"],
         tools=WEB_TOOLS,
         max_steps=20,
         verbosity_level=2,
@@ -99,8 +102,8 @@ def create_agent(model_id="o1"):
     Additionally, if after some searching you find out that you need more information to answer the question, you can use `final_answer` with your request for clarification as argument to request for more information."""
 
     manager_agent = CodeAgent(
-        model=model,
-        tools=[visualizer, TextInspectorTool(model, text_limit)],
+        model=models["text_inspector"],
+        tools=[visualizer, TextInspectorTool(models["text_inspector"], text_limit)],
         max_steps=12,
         verbosity_level=2,
         additional_authorized_imports=["*"],
@@ -113,12 +116,36 @@ def create_agent(model_id="o1"):
 
 def main():
     args = parse_args()
+    experiment_id, agent_configs = load_experiment_config("agent_models.yaml")
+    models = load_agent_models(agent_configs)
+    exp_folder = get_experiment_folder(experiment_id)
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    agent = create_agent(model_id=args.model_id)
+    # Save a copy of the YAML config used
+    shutil.copy("agent_models.yaml", exp_folder / "agent_models.yaml")
 
-    answer = agent.run(args.question)
+    agent = create_agent(models)
+    run_result = agent.run(args.question)
 
-    print(f"Got this answer: {answer}")
+    # Gather trace info
+    full_message_history = agent.write_memory_to_messages()
+    full_steps = agent.memory.get_full_steps() if hasattr(agent.memory, 'get_full_steps') else None
+    trace = {
+        "experiment_id": experiment_id,
+        "timestamp": timestamp,
+        "question": args.question,
+        "answer": getattr(run_result, "output", run_result),
+        "token_usage": getattr(run_result, "token_usage", None),
+        "messages": full_message_history,
+        "steps": full_steps,
+        "models": {k: str(v) for k, v in models.items()},
+    }
+
+    with open(exp_folder / "trace.json", "w") as f:
+        json.dump(make_json_serializable(trace), f, indent=2)
+
+    print(f"Got this answer: {trace['answer']}")
+    print(f"Trace saved to {exp_folder}")
 
 
 if __name__ == "__main__":

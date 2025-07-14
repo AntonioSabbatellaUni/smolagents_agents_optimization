@@ -114,7 +114,9 @@ class VisualQATool(Tool):
     }
     output_type = "string"
 
-    client = InferenceClient("HuggingFaceM4/idefics2-8b-chatty")
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
 
     def forward(self, image_path: str, question: str | None = None) -> str:
         output = ""
@@ -136,6 +138,12 @@ class VisualQATool(Tool):
             )
 
         return output
+
+
+# Helper to create VisualQATool from config-driven client
+def create_visual_qa_tool(model):
+    # model is expected to be an InferenceClientModel or similar with a .client attribute
+    return VisualQATool(model.client)
 
 
 @tool
