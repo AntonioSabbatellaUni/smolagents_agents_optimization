@@ -1,0 +1,11 @@
+agents:
+  text_inspector:
+    model_class: LiteLLMModel
+    model_id: gpt-4.1-nano
+    max_tokens: 8192
+  visual_qa:
+    model_class: InferenceClientModel
+    model_id: HuggingFaceM4/idefics2-8b-chatty
+  reformulator:
+    model_class: InferenceClientModel
+    model_id: Qwen/Qwen2.5-Coder-32B-Instruct 

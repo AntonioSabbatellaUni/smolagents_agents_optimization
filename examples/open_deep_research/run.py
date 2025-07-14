@@ -27,6 +27,9 @@ from smolagents import (
 )
 from smolagents.utils import make_json_serializable
 
+# Import our tracking utilities
+from utils import EnhancedRunManager
+
 
 load_dotenv(override=True)
 login(os.getenv("HF_TOKEN"))
@@ -69,9 +72,13 @@ def get_experiment_folder(experiment_id):
     return folder
 
 
-def create_agent(models):
+def create_agent(models, run_manager):
     text_limit = 100000
     browser = SimpleTextBrowser(**BROWSER_CONFIG)
+    
+    # Wrap models with tracking
+    tracked_models = run_manager.wrap_models(models)
+    
     WEB_TOOLS = [
         GoogleSearchTool(provider="serper"),
         VisitTool(browser),
@@ -80,10 +87,10 @@ def create_agent(models):
         FinderTool(browser),
         FindNextTool(browser),
         ArchiveSearchTool(browser),
-        TextInspectorTool(models["text_inspector"], text_limit),
+        TextInspectorTool(tracked_models["text_inspector"], text_limit),
     ]
     text_webbrowser_agent = ToolCallingAgent(
-        model=models["text_inspector"],
+        model=tracked_models["text_inspector"],
         tools=WEB_TOOLS,
         max_steps=20,
         verbosity_level=2,
@@ -102,8 +109,8 @@ def create_agent(models):
     Additionally, if after some searching you find out that you need more information to answer the question, you can use `final_answer` with your request for clarification as argument to request for more information."""
 
     manager_agent = CodeAgent(
-        model=models["text_inspector"],
-        tools=[visualizer, TextInspectorTool(models["text_inspector"], text_limit)],
+        model=tracked_models["text_inspector"],
+        tools=[visualizer, TextInspectorTool(tracked_models["text_inspector"], text_limit)],
         max_steps=12,
         verbosity_level=2,
         additional_authorized_imports=["*"],
@@ -118,34 +125,36 @@ def main():
     args = parse_args()
     experiment_id, agent_configs = load_experiment_config("agent_models.yaml")
     models = load_agent_models(agent_configs)
-    exp_folder = get_experiment_folder(experiment_id)
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-
-    # Save a copy of the YAML config used
-    shutil.copy("agent_models.yaml", exp_folder / "agent_models.yaml")
-
-    agent = create_agent(models)
+    
+    # Initialize enhanced tracking system
+    run_manager = EnhancedRunManager()
+    
+    # Setup session
+    session_dir = run_manager.setup_session(experiment_id, args.question)
+    
+    # Create agent with tracking
+    agent = create_agent(models, run_manager)
+    
+    # Run the agent with tracking
+    run_manager.start_run()
     run_result = agent.run(args.question)
-
-    # Gather trace info
-    full_message_history = agent.write_memory_to_messages()
-    full_steps = agent.memory.get_full_steps() if hasattr(agent.memory, 'get_full_steps') else None
-    trace = {
-        "experiment_id": experiment_id,
-        "timestamp": timestamp,
-        "question": args.question,
+    
+    # Save all tracking data and generate reports
+    saved_files = run_manager.finish_run_and_save(
+        question=args.question,
+        run_result=run_result,
+        agent=agent,
+        experiment_id=experiment_id,
+        models=models
+    )
+    
+    # Print results
+    original_trace = {
         "answer": getattr(run_result, "output", run_result),
-        "token_usage": getattr(run_result, "token_usage", None),
-        "messages": full_message_history,
-        "steps": full_steps,
-        "models": {k: str(v) for k, v in models.items()},
+        "experiment_id": experiment_id,
+        "question": args.question
     }
-
-    with open(exp_folder / "trace.json", "w") as f:
-        json.dump(make_json_serializable(trace), f, indent=2)
-
-    print(f"Got this answer: {trace['answer']}")
-    print(f"Trace saved to {exp_folder}")
+    run_manager.print_results(original_trace, saved_files)
 
 
 if __name__ == "__main__":

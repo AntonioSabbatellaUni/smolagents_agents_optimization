@@ -153,3 +153,34 @@ tool_output/
 
 # Gradio runtime
 .gradio/
+
+# Experiments and tracking data (smolagents optimization)
+**/experiments/
+**/downloads_folder/
+**/temp_files/
+**/session_data/
+**/tracking_data/
+**/browser_cache/
+**/downloads/
+
+# Model files and checkpoints
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+model_weights/
+checkpoints/
+
+# Large data files
+*.bin
+
+# API keys and secrets
+secrets.txt
+api_keys.txt
+credentials.json
+
+# Temporary and cache files
+*.tmp
+*.temp
+cache/
+temp/
