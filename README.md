@@ -13,24 +13,56 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
+
+# 🧬 Smolagents Agents Optimization
+
 <p align="center">
-    <!-- Uncomment when CircleCI is set up
-    <a href="https://circleci.com/gh/huggingface/accelerate"><img alt="Build" src="https://img.shields.io/circleci/build/github/huggingface/transformers/master"></a>
-    -->
-    <a href="https://github.com/huggingface/smolagents/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/huggingface/smolagents.svg?color=blue"></a>
+    <a href="https://github.com/huggingface/smolagents"><img alt="Original Repository" src="https://img.shields.io/badge/Fork%20of-HuggingFace%20Smolagents-blue"></a>
+    <a href="https://github.com/AntonioSabbatellaUni/smolagents_agents_optimization/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/AntonioSabbatellaUni/smolagents_agents_optimization.svg?color=blue"></a>
     <a href="https://huggingface.co/docs/smolagents"><img alt="Documentation" src="https://img.shields.io/website/http/huggingface.co/docs/smolagents/index.html.svg?down_color=red&down_message=offline&up_message=online"></a>
-    <a href="https://github.com/huggingface/smolagents/releases"><img alt="GitHub release" src="https://img.shields.io/github/release/huggingface/smolagents.svg"></a>
-    <a href="https://github.com/huggingface/smolagents/blob/main/CODE_OF_CONDUCT.md"><img alt="Contributor Covenant" src="https://img.shields.io/badge/Contributor%20Covenant-v2.0%20adopted-ff69b4.svg"></a>
 </p>
 
 <h3 align="center">
   <div style="display:flex;flex-direction:row;">
     <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/smolagents/smolagents.png" alt="Hugging Face mascot as James Bond" width=400px>
-    <p>Agents that think in code!</p>
+    <p>LLM Agent Optimization through Cost and Performance Analysis</p>
   </div>
 </h3>
 
-`smolagents` is a library that enables you to run powerful agents in a few lines of code. It offers:
+## 🎯 **About This Fork**
+
+This repository is a **specialized fork** of the original [HuggingFace Smolagents](https://github.com/huggingface/smolagents) library, enhanced with **comprehensive cost tracking and performance optimization capabilities**. 
+
+Our focus is on **LLM cost and performance optimization using Bayesian optimization algorithms**, with the **Deep Research Agent** as our primary optimization target and architectural example for general agent optimization principles.
+
+### 🔬 **Research Objectives**
+
+- **Cost Optimization**: Track and minimize LLM API costs while maintaining performance
+- **Performance Optimization**: Optimize agent workflows for efficiency and accuracy  
+- **Bayesian Optimization**: Apply advanced optimization algorithms to agent configurations
+- **Architecture Framework**: Demonstrate optimization principles applicable to various agent architectures
+
+### ✨ **Enhanced Features**
+
+🔍 **Comprehensive Cost Tracking**
+- Real-time token usage monitoring per model and agent
+- Industry-standard pricing integration for 30+ LLM providers
+- Detailed cost breakdown and analysis reports
+
+📊 **Performance Analytics** 
+- Session-based experiment tracking with timestamps
+- Multi-format output (JSON, CSV, TXT) for analysis
+- Token efficiency and duration metrics
+
+🎛️ **Dynamic Model Selection**
+- Scriptable LLM selection per agent via YAML configuration
+- Support for multiple model providers (OpenAI, Anthropic, Google, HuggingFace, etc.)
+- Easy model switching for optimization experiments
+
+🧮 **Bayesian Optimization Ready**
+- Structured data output compatible with optimization algorithms
+- Cost and performance metrics for objective functions
+- Experiment reproducibility and tracking
 
 ✨ **Simplicity**: the logic for agents fits in ~1,000 lines of code (see [agents.py](https://github.com/huggingface/smolagents/blob/main/src/smolagents/agents.py)). We kept abstractions to their minimal shape above raw code!
 
