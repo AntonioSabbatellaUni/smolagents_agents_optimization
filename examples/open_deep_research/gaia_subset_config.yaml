@@ -1,0 +1,31 @@
+experiment_id: "gaia_subset_experiment"
+
+# Seed for reproducible dataset selection
+random_seed: 42
+
+# Dataset limits per task level
+dataset_limits:
+  task_1: 2  # Easy tasks
+  task_2: 2  # Medium tasks  
+  task_3: 2  # Hard tasks
+
+# Retry configuration
+retry_config:
+  max_retries: 3
+  base_delay: 1.0  # seconds
+  backoff_factor: 2.0
+
+# Agent model configurations
+agents:
+  text_inspector:
+    model_class: LiteLLMModel
+    model_id: gpt-4o-mini
+    max_tokens: 4096
+  visual_qa:
+    model_class: LiteLLMModel
+    model_id: gpt-4o-mini
+    max_tokens: 4096
+  reformulator:
+    model_class: LiteLLMModel
+    model_id: gpt-4o-mini
+    max_tokens: 4096
