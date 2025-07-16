@@ -29,12 +29,23 @@ Your team then worked diligently to address that request. Read below a transcrip
     # copy them to this context
     try:
         for message in inner_messages:
-            if not message.content:
-                continue
-            message = copy.deepcopy(message)
-            message.role = MessageRole.USER
-            messages.append(message)
-    except Exception:
+            # Handle both ChatMessage objects and dictionary formats
+            if hasattr(message, 'content'):
+                # ChatMessage object
+                if not message.content:
+                    continue
+                message = copy.deepcopy(message)
+                message.role = MessageRole.USER
+                messages.append(message)
+            elif isinstance(message, dict):
+                # Dictionary format
+                if not message.get('content'):
+                    continue
+                message_copy = copy.deepcopy(message)
+                message_copy['role'] = MessageRole.USER
+                messages.append(message_copy)
+    except Exception as e:
+        print(f"Error processing agent memory: {e}")
         messages += [{"role": MessageRole.ASSISTANT, "content": str(inner_messages)}]
 
     # ask for the final answer

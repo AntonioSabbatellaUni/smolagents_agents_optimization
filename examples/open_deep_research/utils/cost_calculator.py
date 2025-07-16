@@ -145,19 +145,37 @@ class CostCalculator:
         Returns:
             Dictionary with aggregated cost information
         """
+        if not usage_data:
+            return {
+                "total_cost": 0.0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "cost_breakdown": {}
+            }
+            
         total_cost = 0.0
         total_input_tokens = 0
         total_output_tokens = 0
         cost_breakdown = {}
         
         for usage in usage_data:
-            model_id = usage["model_id"]
-            input_tokens = usage["input_tokens"]
-            output_tokens = usage["output_tokens"]
+            # Handle both dict and string cases for robustness
+            if isinstance(usage, str):
+                print(f"Warning: usage_data contains string instead of dict: {usage}")
+                continue
+                
+            if not isinstance(usage, dict):
+                print(f"Warning: usage_data contains non-dict item: {type(usage)}")
+                continue
+                
+            model_id = usage.get("model_id", "unknown")
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
             
             cost_info = self.calculate_cost(model_id, input_tokens, output_tokens)
             total_cost += cost_info["total_cost"]
             total_input_tokens += input_tokens
+            total_output_tokens += output_tokens
             total_output_tokens += output_tokens
             
             if model_id not in cost_breakdown:

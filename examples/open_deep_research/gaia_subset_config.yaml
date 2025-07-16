@@ -3,11 +3,21 @@ experiment_id: "gaia_subset_experiment"
 # Seed for reproducible dataset selection
 random_seed: 42
 
+# Cost estimation configuration
+cost_config:
+  config_file: "cost_config.yaml"  # Path to cost configuration file
+  default_model: "gpt-4.1-nano"     # Model to use for cost estimation if not specified
+
+# Processing configuration
+processing:
+  concurrency: 4  # Number of parallel workers
+  max_cost_budget: null  # Optional cost limit (disabled for now)
+
 # Dataset limits per task level
 dataset_limits:
-  task_1: 2  # Easy tasks
-  task_2: 2  # Medium tasks  
-  task_3: 2  # Hard tasks
+  task_1: 1  # Easy tasks
+  task_2: 0  # Medium tasks  
+  task_3: 0  # Hard tasks
 
 # Retry configuration
 retry_config:
