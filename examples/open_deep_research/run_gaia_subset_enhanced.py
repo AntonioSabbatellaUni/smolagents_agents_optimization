@@ -24,7 +24,8 @@ from utils.subset_evaluation import (
     create_deterministic_subset,
     calculate_final_metrics,
     save_results_to_files,
-    print_final_summary
+    print_final_summary,
+    sanitize_agent_memory
 )
 from utils.agent_factory import (
     create_agent_team_with_tracking,
@@ -88,10 +89,11 @@ def answer_single_question_with_tracking(
             
             # Process agent memory
             try:
-                agent_memory = agent.write_memory_to_messages()
+                raw_agent_memory = agent.write_memory_to_messages()
+                agent_memory = sanitize_agent_memory(raw_agent_memory)
                 final_result = prepare_response(augmented_question, agent_memory, reformulation_model=models["reformulator"])
             except Exception as memory_error:
-                print(f"⚠️  Memory processing error: {memory_error}")
+                print(f"⚠️  Memory processing error during reformulation: {memory_error}")
                 agent_memory = []
                 # Keep original final_result from agent.run()
                 # Convert to string if it's not already

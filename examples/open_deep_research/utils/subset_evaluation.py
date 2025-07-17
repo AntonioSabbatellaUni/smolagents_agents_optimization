@@ -13,6 +13,8 @@ from huggingface_hub import snapshot_download
 
 from .cost_estimator import CostEstimator
 
+from smolagents.models import ChatMessage, MessageRole
+from typing import List, Dict, Any, Union
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """Load the subset configuration from YAML file."""
@@ -325,3 +327,30 @@ def print_final_summary(results: List[Dict], final_metrics: Dict, run_manager=No
             print(f"   Could not retrieve enhanced cost data: {e}")
     
     print("\n🎉 Evaluation complete!")
+    
+def sanitize_agent_memory(
+    raw_memory: List[Union[Dict[str, Any], ChatMessage]]
+) -> List[ChatMessage]:
+    """
+    Ensures that the agent memory is a list of ChatMessage objects.
+    Converts dictionaries to ChatMessage objects if necessary.
+    """
+    sanitized_memory = []
+    if not isinstance(raw_memory, list):
+        print(f"⚠️ Agent memory is not a list, but {type(raw_memory)}. Returning empty list.")
+        return []
+
+    for item in raw_memory:
+        if isinstance(item, dict):
+            # Convert dictionary to a ChatMessage object
+            role = item.get('role', MessageRole.USER)
+            content = item.get('content', '')
+            sanitized_memory.append(ChatMessage(role=role, content=content))
+        elif hasattr(item, 'role') and hasattr(item, 'content'):
+            # It's already a ChatMessage-like object, add it directly
+            sanitized_memory.append(item)
+        else:
+            # Skip unrecognized formats
+            print(f"⚠️ Skipping unrecognized memory item type: {type(item)}")
+    
+    return sanitized_memory
