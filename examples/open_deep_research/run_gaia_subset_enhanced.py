@@ -99,6 +99,9 @@ def answer_single_question_with_tracking(
                 # Convert to string if it's not already
                 final_result = str(final_result) if final_result is not None else ""
             
+            # Converti la memoria in un formato serializzabile (lista di dizionari)
+            serializable_memory = [{'role': str(msg.role), 'content': msg.content} for msg in agent_memory]
+
             end_time = datetime.now()
             
             # Calculate metrics
@@ -143,7 +146,8 @@ def answer_single_question_with_tracking(
                 "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S"),
                 "duration_seconds": (end_time - start_time).total_seconds(),
                 "token_counts": total_token_counts,
-                "agent_error": None
+                "agent_error": None,
+                "intermediate_steps": serializable_memory  # Aggiunta della cronologia completa
             }
             
             print(f"✅ Question {question_index + 1} completed successfully (attempt {attempt + 1})")
