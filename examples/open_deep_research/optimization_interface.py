@@ -88,22 +88,52 @@ class GaiaOptimizationInterface:
                     for future in tqdm(as_completed(futures), total=len(futures), desc="Processing questions"):
                         results.append(future.result())
             
-            # Calculate metrics and cost
+            # Calculate metrics and agent-specific cost breakdown
             final_metrics = calculate_final_metrics(results)
             accuracy = final_metrics.get("overall_accuracy", 0.0)
             
-            total_input_tokens = final_metrics['token_usage']['total_input_tokens']
-            total_output_tokens = final_metrics['token_usage']['total_output_tokens']
+            # Get granular cost calculation per agent
+            all_calls = run_manager.get_token_tracker().get_all_calls()
             cost_estimator = CostEstimator()
-            cost_estimate = cost_estimator.estimate_cost("gpt-4o-mini", total_input_tokens, total_output_tokens)
-            total_cost = cost_estimate.get("total_cost", 0.0)
+            total_cost = 0.0
+            cost_breakdown = {}
             
-            # Save summary if requested
+            # Aggregate tokens per agent
+            tokens_per_agent = {}
+            for call in all_calls:
+                agent_name = call.agent_name
+                if agent_name not in tokens_per_agent:
+                    tokens_per_agent[agent_name] = {'input': 0, 'output': 0}
+                tokens_per_agent[agent_name]['input'] += call.input_tokens
+                tokens_per_agent[agent_name]['output'] += call.output_tokens
+            
+            # Calculate cost for each agent with its specific model
+            for agent_name, token_usage in tokens_per_agent.items():
+                if agent_name in agent_model_configs:
+                    model_id = agent_model_configs[agent_name].get('model_id', 'gpt-4o-mini')
+                    cost_estimate = cost_estimator.estimate_cost(
+                        model_name=model_id, input_tokens=token_usage['input'], 
+                        output_tokens=token_usage['output']
+                    )
+                    agent_cost = cost_estimate.get("total_cost", 0.0)
+                    total_cost += agent_cost
+                    cost_breakdown[agent_name] = {
+                        'model_id': model_id, 'cost': agent_cost,
+                        'tokens': token_usage['input'] + token_usage['output']
+                    }
+            
+            # Enhanced result output with cost breakdown
             if save_detailed_results:
                 execution_time = time.time() - run_manager.start_time
                 run_manager.save_session_summary(session_dir, "optimization", execution_time, final_metrics)
             
+            # Print detailed cost breakdown for transparency
+            print(f"💰 Cost Breakdown:")
+            for agent_name, details in cost_breakdown.items():
+                print(f"  {agent_name} ({details['model_id']}): ${details['cost']:.6f} ({details['tokens']:,} tokens)")
+            print(f"  Total: ${total_cost:.6f}")
             print(f"✅ Evaluation complete: {accuracy:.2f}% accuracy, ${total_cost:.6f} cost")
+            
             return accuracy, total_cost, session_dir
             
         except Exception as e:
@@ -114,27 +144,57 @@ class GaiaOptimizationInterface:
 def evaluate_configuration(agent_model_configs: Dict[str, Any], dataset_limits: Optional[Dict[str, int]] = None,
                           run_name: Optional[str] = None, **kwargs) -> Tuple[float, float, Path]:
     """Simple function interface for quick evaluations."""
-    interface = GaiaOptimizationInterface("gaia_subset_config.yaml")
+    try:
+        interface = GaiaOptimizationInterface("gaia_subset_config.yaml")
+    except FileNotFoundError:
+        print("⚠️ gaia_subset_config.yaml not found, using interface without base config")
+        interface = GaiaOptimizationInterface()
     return interface.evaluate_configuration(agent_model_configs, dataset_limits, run_name, **kwargs)
 
 
 if __name__ == "__main__":
-    print("🧪 Testing optimization interface...")
+    import yaml
+    
+    print("🧪 Testing optimization interface by loading from config file...")
     
     # Test configuration
-    test_models = {
-        'text_inspector': {'model_class': 'LiteLLMModel', 'model_id': 'gpt-4o-mini'},
-        'visual_qa': {'model_class': 'LiteLLMModel', 'model_id': 'gpt-4o-mini'},
-        'reformulator': {'model_class': 'LiteLLMModel', 'model_id': 'gpt-4o-mini'}
-    }
-    test_limits = {'task_1': 2, 'task_2': 0, 'task_3': 0}
+    # test_models = {
+    #     'text_inspector': {'model_class': 'LiteLLMModel', 'model_id': 'gpt-4.1-nano'},
+    #     'visual_qa': {'model_class': 'LiteLLMModel', 'model_id': 'gpt-4o-mini'},
+    #     'reformulator': {'model_class': 'LiteLLMModel', 'model_id': 'gpt-4.1-nano'}
+    # }
+    # test_limits = {'task_1': 1, 'task_2': 0, 'task_3': 0}
+    
+        # Load configuration from YAML file to ensure consistency with real usage
+    try:
+        with open("gaia_subset_config.yaml", 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Extract necessary configurations
+        test_models = config['agents']
+        test_limits = {'task_1': 1, 'task_2': 0, 'task_3': 0}  # Use 1 question for quick test
+        
+        print(f"✅ Loaded configuration with {len(test_models)} agent models:")
+        for agent_name, agent_config in test_models.items():
+            print(f"   {agent_name}: {agent_config['model_id']}")
+        
+    except FileNotFoundError:
+        print("❌ Error: gaia_subset_config.yaml not found. Please ensure the config file exists.")
+        exit(1)
+    except KeyError as e:
+        print(f"❌ Error: Your gaia_subset_config.yaml is missing a required key: {e}")
+        exit(1)
     
     accuracy, cost, path = evaluate_configuration(
-        agent_model_configs=test_models, dataset_limits=test_limits,
-        run_name="interface_test", save_detailed_results=True
+        agent_model_configs=test_models,
+        dataset_limits=test_limits,
+        run_name="interface_test_from_yaml",
+        save_detailed_results=True,
+        concurrency=1  # Use sequential processing for easier debugging
     )
     
-    print(f"\n📊 Test Results:")
+    print(f"\n📊 Test Results Summary:")
     print(f"   Accuracy: {accuracy:.2f}%")
-    print(f"   Cost: ${cost:.6f}")
-    print(f"   Logs: {path}")
+    print(f"   Total Cost: ${cost:.6f}")
+    print(f"   Session: {path}")
+    print("✅ Interface test completed successfully!")

@@ -13,7 +13,7 @@ from scripts.text_web_browser import (
     SimpleTextBrowser,
     VisitTool,
 )
-from scripts.visual_qa import visualizer
+from scripts.visual_qa import VisualQATool
 from scripts.run_agents import get_single_file_description, get_zip_description
 
 from smolagents import CodeAgent, GoogleSearchTool, ToolCallingAgent
@@ -41,6 +41,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     tracked_models = run_manager.wrap_models(models)
     
     ti_tool = TextInspectorTool(tracked_models["text_inspector"], text_limit)
+    visual_qa_tool = VisualQATool(tracked_models["visual_qa"])
     browser = SimpleTextBrowser(**BROWSER_CONFIG)
 
     WEB_TOOLS = [
@@ -55,7 +56,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     ]
 
     text_webbrowser_agent = ToolCallingAgent(
-        model=tracked_models["text_inspector"],
+        model=tracked_models["search_agent"],  # Use dedicated search agent model
         tools=WEB_TOOLS,
         max_steps=20,
         verbosity_level=2,
@@ -75,8 +76,8 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     Additionally, if after some searching you find out that you need more information to answer the question, you can use `final_answer` with your request for clarification as argument to request for more information."""
 
     manager_agent = CodeAgent(
-        model=tracked_models["text_inspector"],
-        tools=[visualizer, ti_tool],
+        model=tracked_models["manager"],  # Use dedicated manager model
+        tools=[visual_qa_tool, ti_tool],
         max_steps=12,
         verbosity_level=2,
         additional_authorized_imports=["*"],
@@ -86,7 +87,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     return manager_agent
 
 
-def process_file_attachments(example: dict, models: Dict) -> str:
+def process_file_attachments(example: dict, models: Dict, run_manager=None) -> str:
     """Process file attachments and return augmented question."""
     augmented_question = f"""You have one question to answer. It is paramount that you provide a correct answer.
 Give it all you can: I know for a fact that you have access to all the relevant tools to solve it and find the correct answer (the answer does exist).
@@ -99,17 +100,27 @@ Run verification steps if that's needed, you must make sure you find the correct
     if example.get("file_name") and len(str(example["file_name"])) > 0:
         file_path = Path(example["file_name"])
         if file_path.exists():
+            # Create tools for file processing (using tracked models if available)
+            if run_manager:
+                tracked_models = run_manager.wrap_models(models)
+                visual_tool = VisualQATool(tracked_models["visual_qa"])
+                text_tool = TextInspectorTool(tracked_models["text_inspector"], 100000)
+            else:
+                from scripts.visual_qa import visualizer
+                visual_tool = visualizer
+                text_tool = TextInspectorTool(models["text_inspector"], 100000)
+            
             if ".zip" in example["file_name"]:
                 prompt_use_files = "\n\nTo solve the task above, you will have to use these attached files:\n"
                 prompt_use_files += get_zip_description(
                     example["file_name"], example["question"], 
-                    visualizer, TextInspectorTool(models["text_inspector"], 100000)
+                    visual_tool, text_tool
                 )
             else:
                 prompt_use_files = "\n\nTo solve the task above, you will have to use this attached file:\n"
                 prompt_use_files += get_single_file_description(
                     example["file_name"], example["question"], 
-                    visualizer, TextInspectorTool(models["text_inspector"], 100000)
+                    visual_tool, text_tool
                 )
             augmented_question += prompt_use_files
         else:

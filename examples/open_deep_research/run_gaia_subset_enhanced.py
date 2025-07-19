@@ -79,8 +79,8 @@ def answer_single_question_with_tracking(
             
             agent = create_agent_team_with_tracking(models, run_manager)
 
-            # Process file attachments using modular function
-            augmented_question = process_file_attachments(example, models)
+            # Process file attachments using modular function with tracking
+            augmented_question = process_file_attachments(example, models, run_manager)
 
             start_time = datetime.now()
             
@@ -91,12 +91,12 @@ def answer_single_question_with_tracking(
             try:
                 raw_agent_memory = agent.write_memory_to_messages()
                 agent_memory = sanitize_agent_memory(raw_agent_memory)
-                final_result = prepare_response(augmented_question, agent_memory, reformulation_model=models["reformulator"])
+                # Use tracked model for reformulator to ensure cost tracking
+                tracked_models = run_manager.wrap_models(models)
+                final_result = prepare_response(augmented_question, agent_memory, reformulation_model=tracked_models["reformulator"])
             except Exception as memory_error:
                 print(f"⚠️  Memory processing error during reformulation: {memory_error}")
                 agent_memory = []
-                # Keep original final_result from agent.run()
-                # Convert to string if it's not already
                 final_result = str(final_result) if final_result is not None else ""
             
             # Converti la memoria in un formato serializzabile (lista di dizionari)

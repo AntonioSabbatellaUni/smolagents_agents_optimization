@@ -15,7 +15,7 @@ processing:
 
 # Dataset limits per task level
 dataset_limits:
-  task_1: 1  # Easy tasks
+  task_1: 3  # Easy tasks
   task_2: 0  # Medium tasks  
   task_3: 0  # Hard tasks
 
@@ -27,15 +27,32 @@ retry_config:
 
 # Agent model configurations
 agents:
-  text_inspector:
+  # Main orchestrator agent
+  manager:
     model_class: LiteLLMModel
     model_id: gpt-4o-mini
-    max_tokens: 4096
+    max_tokens: 8096
+  
+  # Web search specialist agent  
+  search_agent:
+    model_class: LiteLLMModel
+    model_id: gpt-4.1-nano
+    max_tokens: 8096
+  
+  # Text analysis tool
+  text_inspector:
+    model_class: LiteLLMModel
+    model_id: gpt-4.1-nano
+    max_tokens: 8096
+  
+  # Visual analysis tool (requires multimodal model)
   visual_qa:
     model_class: LiteLLMModel
     model_id: gpt-4o-mini
     max_tokens: 4096
+  
+  # Response post-processing
   reformulator:
     model_class: LiteLLMModel
-    model_id: gpt-4o-mini
+    model_id: gpt-4.1-nano
     max_tokens: 4096
