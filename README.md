@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# 🧬 Smolagents Agents Optimization
+# 🧬 Smolagents: Agent Optimization Fork
 
 <p align="center">
     <a href="https://github.com/huggingface/smolagents"><img alt="Original Repository" src="https://img.shields.io/badge/Fork%20of-HuggingFace%20Smolagents-blue"></a>
@@ -22,47 +22,35 @@ limitations under the License.
     <a href="https://huggingface.co/docs/smolagents"><img alt="Documentation" src="https://img.shields.io/website/http/huggingface.co/docs/smolagents/index.html.svg?down_color=red&down_message=offline&up_message=online"></a>
 </p>
 
-<h3 align="center">
-  <div style="display:flex;flex-direction:row;">
-    <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/smolagents/smolagents.png" alt="Hugging Face mascot as James Bond" width=400px>
-    <p>LLM Agent Optimization through Cost and Performance Analysis</p>
-  </div>
-</h3>
+---
 
-## 🎯 **About This Fork**
+## 🎯 About This Fork: LLM Agent Optimization
 
-This repository is a **specialized fork** of the original [HuggingFace Smolagents](https://github.com/huggingface/smolagents) library, enhanced with **comprehensive cost tracking and performance optimization capabilities**. 
+This repository is a **specialized fork** of the original [HuggingFace Smolagents](https://github.com/huggingface/smolagents) library, enhanced with a robust framework for **cost-aware agent optimization**.
 
-Our focus is on **LLM cost and performance optimization using Bayesian optimization algorithms**, with the **Deep Research Agent** as our primary optimization target and architectural example for general agent optimization principles.
+Our primary goal is to provide the tools to systematically find the most cost-effective combination of Language Models (LLMs) for a multi-component agent system, without sacrificing performance. We use the **Deep Research Agent** as our primary case study, demonstrating principles applicable to any complex agent architecture.
 
-### 🔬 **Research Objectives**
+### ✨ Key Enhancements in This Fork
 
-- **Cost Optimization**: Track and minimize LLM API costs while maintaining performance
-- **Performance Optimization**: Optimize agent workflows for efficiency and accuracy  
-- **Bayesian Optimization**: Apply advanced optimization algorithms to agent configurations
-- **Architecture Framework**: Demonstrate optimization principles applicable to various agent architectures
+Our implementation is a self-contained example located in the [`examples/open_deep_research/`](./examples/open_deep_research/) directory. It includes:
 
-### ✨ **Enhanced Features**
+- 🔬 **Granular Cost Tracking**: A sophisticated tracking system that monitors token usage and monetary cost for **each individual component** of an agent team (e.g., manager, search specialist, tools).
 
-🔍 **Comprehensive Cost Tracking**
-- Real-time token usage monitoring per model and agent
-- Industry-standard pricing integration for 30+ LLM providers
-- Detailed cost breakdown and analysis reports
+- ⚙️ **Programmatic Evaluation Interface**: The `optimization_interface.py` file, which provides a clean, black-box function (`evaluate_configuration`) for running benchmarks. This is the core entry point for any optimization algorithm.
 
-📊 **Performance Analytics** 
-- Session-based experiment tracking with timestamps
-- Multi-format output (JSON, CSV, TXT) for analysis
-- Token efficiency and duration metrics
+- 📊 **Multi-Objective Metrics**: The evaluation function returns both **accuracy (%)** and **total cost ($)**, enabling true multi-objective optimization.
 
-🎛️ **Dynamic Model Selection**
-- Scriptable LLM selection per agent via YAML configuration
-- Support for multiple model providers (OpenAI, Anthropic, Google, HuggingFace, etc.)
-- Easy model switching for optimization experiments
+- 🧩 **Config-Driven Architecture**: The entire agent team, including the models for the main agents and individual tools, is defined in a single YAML file, allowing for easy, dynamic configuration changes.
 
-🧮 **Bayesian Optimization Ready**
-- Structured data output compatible with optimization algorithms
-- Cost and performance metrics for objective functions
-- Experiment reproducibility and tracking
+- 🚀 **Optimization-Ready**: Designed from the ground up to be integrated with optimization frameworks like BoTorch, Optuna, or custom Bayesian optimization scripts.
+
+> **To see our full implementation and get started, head to the [Deep Research Example](./examples/open_deep_research/).** You will find specific READMEs and guides there.
+
+---
+
+## About the Original `smolagents` Library
+
+`smolagents` is a powerful, minimalist library for building great agentic systems.
 
 ✨ **Simplicity**: the logic for agents fits in ~1,000 lines of code (see [agents.py](https://github.com/huggingface/smolagents/blob/main/src/smolagents/agents.py)). We kept abstractions to their minimal shape above raw code!
 
