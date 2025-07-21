@@ -18,7 +18,13 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
     "gpt-4.1": ModelPricing(2.00, 8.00, "openai"),
     "gpt-4.1-mini": ModelPricing(0.40, 1.60, "openai"),
     "gpt-4.1-nano": ModelPricing(0.10, 0.40, "openai"),
-    "gpt-4o": ModelPricing(2.00, 8.00, "openai"),
+        # OpenAI Vision Models
+    "gpt-4o": ModelPricing(
+        input_cost_per_1m=2.50,
+        output_cost_per_1m=10.0,
+        provider="openai"
+    ),
+    
     "gpt-4o-mini": ModelPricing(0.40, 1.60, "openai"),
     "gpt-3.5-turbo": ModelPricing(0.50, 1.50, "openai"),
     
@@ -54,6 +60,29 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
     # Other reasoning models
     "o3": ModelPricing(2.00, 8.00, "openai"),
     "o4-mini": ModelPricing(0.85, 4.40, "openai"),  # Average of range
+    
+    # OpenRouter Models - Moonshot AI (using actual pricing for optimization)
+    "openrouter/moonshotai/kimi-k2": ModelPricing(0.14, 2.49, "openrouter/moonshotai"),
+    "openrouter/moonshotai/kimi-k2:free": ModelPricing(0.14, 2.49, "openrouter/moonshotai"),
+    
+    # OpenRouter Models - Mistral
+    "openrouter/mistralai/devstral-small": ModelPricing(0.07, 0.28, "openrouter/mistralai"),
+    "openrouter/mistralai/mistral-small-3.2-24b-instruct": ModelPricing(0.05, 0.10, "openrouter/mistralai"),
+    "openrouter/mistralai/mistral-small-3.2-24b-instruct:free": ModelPricing(0.05, 0.10, "openrouter/mistralai"),
+    
+    # OpenRouter Models - Google
+    "openrouter/google/gemma-3n-e2b-it": ModelPricing(0.05, 0.10, "openrouter/google"),
+    "openrouter/google/gemma-3n-e2b-it:free": ModelPricing(0.05, 0.10, "openrouter/google"),
+    
+    # OpenRouter Models - DeepSeek
+    "openrouter/deepseek/deepseek-r1-0528": ModelPricing(0.272, 0.272, "openrouter/deepseek"),
+    "openrouter/deepseek/deepseek-r1-0528:free": ModelPricing(0.272, 0.272, "openrouter/deepseek"),
+    
+    # OpenRouter Models - Qwen
+    "openrouter/qwen/qwen3-32b": ModelPricing(0.10, 0.30, "openrouter/qwen"),
+    "openrouter/qwen/qwen3-32b:free": ModelPricing(0.10, 0.30, "openrouter/qwen"),
+    "openrouter/qwen/qwen3-235b-a22b": ModelPricing(0.13, 0.60, "openrouter/qwen"),
+    "openrouter/qwen/qwen3-235b-a22b:free": ModelPricing(0.13, 0.60, "openrouter/qwen"),
     
     # Groq Models (typically cheaper due to fast inference)
     "groq/llama-3.3-70b": ModelPricing(0.50, 2.00, "groq"),
