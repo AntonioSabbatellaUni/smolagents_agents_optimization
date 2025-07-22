@@ -30,19 +30,19 @@ agents:
   # Main orchestrator agent
   manager:
     model_class: LiteLLMModel
-    model_id: gpt-4o-mini
+    model_id: openrouter/mistralai/devstral-small
     max_tokens: 8096
   
   # Web search specialist agent  
   search_agent:
     model_class: LiteLLMModel
-    model_id: gpt-4.1-nano
+    model_id: openrouter/mistralai/devstral-small
     max_tokens: 8096
   
   # Text analysis tool
   text_inspector:
     model_class: LiteLLMModel
-    model_id: gpt-4.1-nano
+    model_id: openrouter/mistralai/devstral-small
     max_tokens: 8096
   
   # Visual analysis tool (requires multimodal model)
@@ -54,5 +54,5 @@ agents:
   # Response post-processing
   reformulator:
     model_class: LiteLLMModel
-    model_id: gpt-4.1-nano
+    model_id: openrouter/mistralai/devstral-small
     max_tokens: 4096
