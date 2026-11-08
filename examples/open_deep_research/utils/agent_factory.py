@@ -16,7 +16,7 @@ from scripts.text_web_browser import (
 from scripts.visual_qa import VisualQATool
 from scripts.run_agents import get_single_file_description, get_zip_description
 
-from smolagents import CodeAgent, GoogleSearchTool, ToolCallingAgent
+from smolagents import CodeAgent, GoogleSearchTool, ToolCallingAgent, DuckDuckGoSearchTool
 from utils import EnhancedRunManager
 
 
@@ -45,7 +45,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     browser = SimpleTextBrowser(**BROWSER_CONFIG)
 
     WEB_TOOLS = [
-        GoogleSearchTool(provider="serper"),
+        (GoogleSearchTool(provider="serper") if os.getenv("SERPER_API_KEY") else DuckDuckGoSearchTool()),  # revival: DDG needs no key
         VisitTool(browser),
         PageUpTool(browser),
         PageDownTool(browser),
@@ -58,7 +58,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     text_webbrowser_agent = ToolCallingAgent(
         model=tracked_models["search_agent"],  # Use dedicated search agent model
         tools=WEB_TOOLS,
-        max_steps=20,
+        max_steps=int(os.getenv("MALBO_SEARCH_MAX_STEPS", 20)),
         verbosity_level=2,
         planning_interval=4,
         name="search_agent",
@@ -78,7 +78,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     manager_agent = CodeAgent(
         model=tracked_models["manager"],  # Use dedicated manager model
         tools=[visual_qa_tool, ti_tool],
-        max_steps=12,
+        max_steps=int(os.getenv("MALBO_MANAGER_MAX_STEPS", 12)),
         verbosity_level=2,
         additional_authorized_imports=["*"],
         planning_interval=4,
@@ -131,6 +131,12 @@ Run verification steps if that's needed, you must make sure you find the correct
 
 def create_gaia_dataset_loader(use_raw_dataset: bool, set_to_run: str):
     """Create a GAIA dataset loader function configured for the specific setup."""
+    if os.getenv("GAIA_LOCAL_QUESTIONS") or (not os.path.exists("data/gaia") and not os.getenv("HF_TOKEN")):
+        # revival: GAIA is gated; without an HF token use the tiny local multi-hop-ish set
+        import datasets as _ds
+        path = os.getenv("GAIA_LOCAL_QUESTIONS", "local_questions.jsonl")
+        print(f"ℹ️  Using local fallback questions from {path} (GAIA gated / no HF_TOKEN)")
+        return _ds.load_dataset("json", data_files=path, split="train")
     if not os.path.exists("data/gaia"):
         from huggingface_hub import snapshot_download
         

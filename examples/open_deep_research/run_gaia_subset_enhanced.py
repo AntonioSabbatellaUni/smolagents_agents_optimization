@@ -36,7 +36,8 @@ from utils.cost_estimator import CostEstimator
 
 
 load_dotenv(override=True)
-login(os.getenv("HF_TOKEN"))
+if os.getenv("HF_TOKEN"):
+    login(os.getenv("HF_TOKEN"))
 
 append_answer_lock = threading.Lock()
 
