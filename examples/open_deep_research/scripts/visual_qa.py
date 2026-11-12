@@ -99,8 +99,10 @@ def vision_messages(image_path: str, question: str) -> list[dict]:
 def vision_call_kwargs(model_id: str) -> dict:
     """Extra completion kwargs for the vision call. DeepSeek v4.x on Go is a reasoning model that burns the whole token
     budget on hidden reasoning for images (empty content, finish_reason=length) -> disable thinking for it.
-    Override with env MALBO_VISUAL_QA_EXTRA_BODY (JSON dict, {} = nothing); cap output with MALBO_VISUAL_QA_MAX_TOKENS."""
-    kw = {"max_tokens": int(os.getenv("MALBO_VISUAL_QA_MAX_TOKENS", "1500"))}
+    Override with env MALBO_VISUAL_QA_EXTRA_BODY (JSON dict, {} = nothing); optional hard cap with MALBO_VISUAL_QA_MAX_TOKENS."""
+    kw = {}  # max_tokens comes from the role model config (>= 32768, see loader.apply_role_overrides)
+    if os.getenv("MALBO_VISUAL_QA_MAX_TOKENS"):
+        kw["max_tokens"] = int(os.environ["MALBO_VISUAL_QA_MAX_TOKENS"])
     raw = os.getenv("MALBO_VISUAL_QA_EXTRA_BODY")
     body = json.loads(raw) if raw else ({"thinking": {"type": "disabled"}} if "deepseek" in (model_id or "") else {})
     if body:
