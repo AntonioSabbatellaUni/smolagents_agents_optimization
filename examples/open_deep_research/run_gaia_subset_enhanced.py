@@ -77,6 +77,8 @@ def answer_single_question_with_tracking(
         try:
             # Reset session tracking for this question
             run_manager.token_tracker.reset_session()
+            from utils import llm_logger
+            llm_logger.set_task(example["task_id"])
             
             agent = create_agent_team_with_tracking(models, run_manager)
 

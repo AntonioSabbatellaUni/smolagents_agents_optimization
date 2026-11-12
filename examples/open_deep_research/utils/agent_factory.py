@@ -137,6 +137,11 @@ def create_gaia_dataset_loader(use_raw_dataset: bool, set_to_run: str):
         path = os.getenv("GAIA_LOCAL_QUESTIONS", "local_questions.jsonl")
         print(f"ℹ️  Using local fallback questions from {path} (GAIA gated / no HF_TOKEN)")
         return _ds.load_dataset("json", data_files=path, split="train")
+    if not os.path.exists("data/gaia") and os.getenv("HF_TOKEN"):
+        # revival: the real gated GAIA repo only has 2023/<split>/metadata.parquet (no metadata.jsonl)
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id="gaia-benchmark/GAIA", repo_type="dataset", local_dir="data/gaia",
+                          allow_patterns=[f"2023/{set_to_run}/*"], token=os.environ["HF_TOKEN"])
     if not os.path.exists("data/gaia"):
         from huggingface_hub import snapshot_download
         
@@ -161,14 +166,24 @@ def create_gaia_dataset_loader(use_raw_dataset: bool, set_to_run: str):
             row["file_name"] = f"data/gaia/{set_to_run}/" + row["file_name"]
         return row
 
+    # revival: GAIA.py (script dataset) is unsupported by datasets>=4 -> read metadata.jsonl directly
     import datasets
-    eval_ds = datasets.load_dataset(
-        "data/gaia/GAIA.py",
-        name="2023_all",
-        split=set_to_run,
-        # data_files={"validation": "validation/metadata.jsonl", "test": "test/metadata.jsonl"},
-    )
-
-    eval_ds = eval_ds.rename_columns({"Question": "question", "Final answer": "true_answer", "Level": "task"})
-    eval_ds = eval_ds.map(preprocess_file_paths)
-    return eval_ds
+    import json as _json
+    meta = next((m for m in (Path("data/gaia/2023") / set_to_run / "metadata.jsonl", Path("data/gaia") / set_to_run / "metadata.jsonl",
+                             Path("data/gaia/2023") / set_to_run / "metadata.parquet", Path("data/gaia") / set_to_run / "metadata.parquet")
+                 if m.exists()), None)
+    if meta is None:
+        raise FileNotFoundError("no GAIA metadata.jsonl/parquet under data/gaia")
+    if meta.suffix == ".parquet":
+        import pandas as _pd
+        rows = _pd.read_parquet(meta).to_dict("records")
+    else:
+        rows = [_json.loads(l) for l in meta.read_text().splitlines() if l.strip()]
+    for r in rows:
+        r.setdefault("file_name", "")
+        r["file_name"] = r["file_name"] or ""
+        if r["file_name"]:
+            r["file_name"] = str(meta.parent / r["file_name"])
+        r["task"] = str(r.pop("Level")); r["question"] = r.pop("Question"); r["true_answer"] = r.pop("Final answer")
+        r.pop("Annotator Metadata", None)
+    return datasets.Dataset.from_list(rows)
