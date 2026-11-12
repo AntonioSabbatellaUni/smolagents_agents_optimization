@@ -1,6 +1,6 @@
 """Revival: run the full Deep Research team on a few fixed GAIA tasks with ONE model for all roles (e.g. OpenCode beam-free).
 Env: OPENCODE_API_KEY, MALBO_TASK_IDS_FILE (json), MALBO_API_BASE, MALBO_MODEL (default openai/beam-free),
-     MALBO_EXTRA_HEADERS (json), MALBO_MANAGER_MAX_STEPS, MALBO_SEARCH_MAX_STEPS, HF_TOKEN.
+     MALBO_EXTRA_HEADERS (json), MALBO_MANAGER_MAX_STEPS, MALBO_SEARCH_MAX_STEPS, MALBO_FLATTEN (1 = plain-string messages), HF_TOKEN.
 Writes <session>/llm_calls.jsonl (every LLM call) and <session>/task_results.json (answer vs gold)."""
 import json, os, time
 from pathlib import Path
@@ -14,7 +14,9 @@ from scripts.gaia_scorer import question_scorer
 install()
 model = os.getenv("MALBO_MODEL", "openai/beam-free")
 cfg = {r: {"model_class": "LiteLLMModel", "model_id": model, "api_base": os.environ["MALBO_API_BASE"],
-           "api_key": os.environ["OPENCODE_API_KEY"], "max_tokens": int(os.getenv("MALBO_MAX_TOKENS", 4096))}
+           "api_key": os.environ["OPENCODE_API_KEY"], "max_tokens": int(os.getenv("MALBO_MAX_TOKENS", 4096)),
+           # iceman-contributor-free answers 422 "Endpoint is unavailable" to assistant messages whose content is a list of parts
+           **({"flatten_messages_as_text": True} if os.getenv("MALBO_FLATTEN") == "1" else {})}
        for r in ["manager", "search_agent", "text_inspector", "visual_qa", "reformulator"]}
 models = load_agent_models(cfg)
 rm = EnhancedRunManager()
