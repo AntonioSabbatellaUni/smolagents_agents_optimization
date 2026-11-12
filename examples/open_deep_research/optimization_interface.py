@@ -3,6 +3,8 @@ Programmatic interface for GAIA benchmark evaluation.
 Designed to be used by optimization loops (BoTorch, Optuna, etc.).
 """
 
+import json
+import os
 import time
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
@@ -16,6 +18,23 @@ from utils import EnhancedRunManager
 from utils.cost_estimator import CostEstimator
 from utils.subset_evaluation import create_deterministic_subset, calculate_final_metrics
 from run_gaia_subset_enhanced import load_gaia_dataset, answer_single_question_with_tracking
+
+
+def select_by_task_ids(eval_ds, path: str):
+    """Return the dataset rows whose task_id is listed in `path`, in file order (raises if any id is missing)."""
+    txt = Path(path).read_text()
+    try:
+        data = json.loads(txt)
+        items = data["tasks"] if isinstance(data, dict) else data
+        ids = [t["task_id"] if isinstance(t, dict) else t for t in items]
+    except json.JSONDecodeError:
+        ids = [l.strip() for l in txt.splitlines() if l.strip()]
+    rows = {r["task_id"]: r for r in eval_ds}
+    missing = [i for i in ids if i not in rows]
+    if missing:
+        raise ValueError(f"{len(missing)} task_ids from {path} not in dataset: {missing[:3]}...")
+    print(f"📋 Using {len(ids)} fixed task_ids from {path}")
+    return [rows[i] for i in ids]
 
 
 class GaiaOptimizationInterface:
@@ -65,7 +84,12 @@ class GaiaOptimizationInterface:
             
             # Load dataset subset
             eval_ds = load_gaia_dataset(use_raw_dataset=False, set_to_run="validation")
-            subset_questions = create_deterministic_subset(eval_ds, dataset_limits, random_seed)
+            task_ids_file = os.getenv("MALBO_TASK_IDS_FILE")
+            if task_ids_file:
+                # fixed task-id list (json with {"tasks":[{"task_id":..}]} or a plain list / txt, one id per line)
+                subset_questions = select_by_task_ids(eval_ds, task_ids_file)
+            else:
+                subset_questions = create_deterministic_subset(eval_ds, dataset_limits, random_seed)
             
             if not subset_questions:
                 print("⚠️ No questions selected for evaluation")
