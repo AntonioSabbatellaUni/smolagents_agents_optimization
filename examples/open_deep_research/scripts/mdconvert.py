@@ -28,7 +28,6 @@ import pptx
 import puremagic
 import pydub
 import requests
-import speech_recognition as sr
 from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import SRTFormatter
@@ -498,6 +497,31 @@ class PptxConverter(HtmlConverter):
         return False
 
 
+_WHISPER = {}
+
+
+def transcribe_audio_file(local_path) -> str:
+    """Local speech-to-text with faster-whisper (CPU, int8). Model size from env WHISPER_MODEL (default 'tiny');
+    weights are baked into the Docker image under WHISPER_CACHE (default /opt/whisper) -> no runtime download unless
+    WHISPER_ALLOW_DOWNLOAD=1."""
+    from faster_whisper import WhisperModel
+
+    size = os.getenv("WHISPER_MODEL", "tiny")
+    if size not in _WHISPER:
+        cache = os.getenv("WHISPER_CACHE", "/opt/whisper")
+        kw = dict(device="cpu", compute_type="int8", cpu_threads=int(os.getenv("WHISPER_THREADS", "2")))
+        if os.path.isdir(cache):
+            kw["download_root"] = cache
+        try:
+            _WHISPER[size] = WhisperModel(size, local_files_only=os.getenv("WHISPER_ALLOW_DOWNLOAD") != "1", **kw)
+        except Exception:
+            if os.getenv("WHISPER_ALLOW_DOWNLOAD") == "1":
+                raise
+            raise RuntimeError(f"whisper model '{size}' not baked into the image (cache {cache})")
+    segments, _info = _WHISPER[size].transcribe(str(local_path), beam_size=1, vad_filter=True)
+    return " ".join(seg.text.strip() for seg in segments).strip()
+
+
 class MediaConverter(DocumentConverter):
     """
     Abstract class for multi-modal media (e.g., images and audio)
@@ -550,8 +574,8 @@ class WavConverter(MediaConverter):
         try:
             transcript = self._transcribe_audio(local_path)
             md_content += "\n\n### Audio Transcript:\n" + ("[No speech detected]" if transcript == "" else transcript)
-        except Exception:
-            md_content += "\n\n### Audio Transcript:\nError. Could not transcribe this audio."
+        except Exception as e:
+            md_content += f"\n\n### Audio Transcript:\nError. Could not transcribe this audio ({type(e).__name__}: {e})."
 
         return DocumentConverterResult(
             title=None,
@@ -559,10 +583,7 @@ class WavConverter(MediaConverter):
         )
 
     def _transcribe_audio(self, local_path) -> str:
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(local_path) as source:
-            audio = recognizer.record(source)
-            return recognizer.recognize_google(audio).strip()
+        return transcribe_audio_file(local_path)
 
 
 class Mp3Converter(WavConverter):
@@ -596,30 +617,12 @@ class Mp3Converter(WavConverter):
                 if f in metadata:
                     md_content += f"{f}: {metadata[f]}\n"
 
-        # Transcribe
-        handle, temp_path = tempfile.mkstemp(suffix=".wav")
-        os.close(handle)
+        # Transcribe locally with faster-whisper (decodes mp3/m4a itself through PyAV/ffmpeg)
         try:
-            if extension.lower() == ".mp3":
-                sound = pydub.AudioSegment.from_mp3(local_path)
-            else:
-                sound = pydub.AudioSegment.from_file(local_path, format="m4a")
-            sound.export(temp_path, format="wav")
-
-            _args = dict()
-            _args.update(kwargs)
-            _args["file_extension"] = ".wav"
-
-            try:
-                transcript = super()._transcribe_audio(temp_path).strip()
-                md_content += "\n\n### Audio Transcript:\n" + (
-                    "[No speech detected]" if transcript == "" else transcript
-                )
-            except Exception:
-                md_content += "\n\n### Audio Transcript:\nError. Could not transcribe this audio."
-
-        finally:
-            os.unlink(temp_path)
+            transcript = self._transcribe_audio(local_path).strip()
+            md_content += "\n\n### Audio Transcript:\n" + ("[No speech detected]" if transcript == "" else transcript)
+        except Exception as e:
+            md_content += f"\n\n### Audio Transcript:\nError. Could not transcribe this audio ({type(e).__name__}: {e})."
 
         # Return the result
         return DocumentConverterResult(

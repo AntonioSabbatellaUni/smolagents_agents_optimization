@@ -6,7 +6,7 @@ random_seed: 42
 # Cost estimation configuration
 cost_config:
   config_file: "cost_config.yaml"  # Path to cost configuration file
-  default_model: "gpt-4.1-nano"     # Model to use for cost estimation if not specified
+  default_model: "deepseek-v4.1-flash"     # Model to use for cost estimation if not specified
 
 # Processing configuration
 processing:
@@ -48,7 +48,7 @@ agents:
   # Visual analysis tool (requires multimodal model)
   visual_qa:
     model_class: LiteLLMModel
-    model_id: gpt-4o-mini
+    model_id: openai/deepseek-v4.1-flash
     max_tokens: 4096
   
   # Response post-processing

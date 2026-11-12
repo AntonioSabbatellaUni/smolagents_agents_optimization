@@ -16,7 +16,7 @@ model = os.getenv("MALBO_MODEL", "openai/beam-free")
 cfg = {r: {"model_class": "LiteLLMModel", "model_id": model, "api_base": os.environ["MALBO_API_BASE"],
            "api_key": os.environ["OPENCODE_API_KEY"], "max_tokens": int(os.getenv("MALBO_MAX_TOKENS", 4096)),
            # iceman-contributor-free answers 422 "Endpoint is unavailable" to assistant messages whose content is a list of parts
-           **({"flatten_messages_as_text": True} if os.getenv("MALBO_FLATTEN") == "1" else {})}
+           **({"flatten_messages_as_text": True} if os.getenv("MALBO_FLATTEN") == "1" and r != "visual_qa" else {})}
        for r in ["manager", "search_agent", "text_inspector", "visual_qa", "reformulator"]}
 models = load_agent_models(cfg)
 rm = EnhancedRunManager()
