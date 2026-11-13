@@ -1,5 +1,7 @@
 # Agent creation and management utilities for GAIA evaluation
 import os
+import threading
+import time
 from typing import Dict
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from scripts.run_agents import get_single_file_description, get_zip_description
 
 from smolagents import CodeAgent, GoogleSearchTool, ToolCallingAgent, DuckDuckGoSearchTool
 from utils import EnhancedRunManager
+from utils.retry import call_with_retry, search_error_retryable
 
 
 BROWSER_CONFIG = {
@@ -33,8 +36,29 @@ BROWSER_CONFIG = {
 os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 
-def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManager):
-    """Create agent team with enhanced tracking integration."""
+class RetryingDuckDuckGoSearchTool(DuckDuckGoSearchTool):
+    """DuckDuckGo search with (a) a process-wide minimum interval between requests (shared by all question threads) and
+    (b) retry with exponential backoff + jitter on rate-limit / blocked / transient errors (max MALBO_MAX_TRIES, each retry logged)."""
+    _glock = threading.Lock()
+    _glast = 0.0
+
+    def _enforce_rate_limit(self) -> None:
+        if not self._min_interval:
+            return
+        with RetryingDuckDuckGoSearchTool._glock:
+            wait = RetryingDuckDuckGoSearchTool._glast + self._min_interval - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            RetryingDuckDuckGoSearchTool._glast = time.time()
+
+    def forward(self, query: str) -> str:
+        return call_with_retry(lambda: DuckDuckGoSearchTool.forward(self, query), "search_retry", search_error_retryable,
+                               tool="web_search", query=query[:80])
+
+
+def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManager, task_id: str = None):
+    """Create agent team with enhanced tracking integration. Everything mutable (browser, tools, agents) is created per call,
+    so one team per question is safe across threads; the browser downloads go to a per-question folder (task_id)."""
     text_limit = 100000
     
     # Wrap models with tracking
@@ -42,10 +66,15 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     
     ti_tool = TextInspectorTool(tracked_models["text_inspector"], text_limit)
     visual_qa_tool = VisualQATool(tracked_models["visual_qa"])
-    browser = SimpleTextBrowser(**BROWSER_CONFIG)
+    browser_cfg = dict(BROWSER_CONFIG, request_kwargs=dict(BROWSER_CONFIG["request_kwargs"]))
+    if task_id:
+        dl = os.path.join(BROWSER_CONFIG["downloads_folder"], str(task_id))
+        os.makedirs(dl, exist_ok=True)
+        browser_cfg["downloads_folder"] = dl
+    browser = SimpleTextBrowser(**browser_cfg)
 
     WEB_TOOLS = [
-        (GoogleSearchTool(provider="serper") if os.getenv("SERPER_API_KEY") else DuckDuckGoSearchTool()),  # revival: DDG needs no key
+        (GoogleSearchTool(provider="serper") if os.getenv("SERPER_API_KEY") else RetryingDuckDuckGoSearchTool()),  # revival: DDG needs no key
         VisitTool(browser),
         PageUpTool(browser),
         PageDownTool(browser),

@@ -69,12 +69,13 @@ def apply_role_overrides(role: str, params: dict) -> dict:
     return params
 
 
-def load_agent_models(agent_configs):
+def load_agent_models(agent_configs, quiet=False):
     models = {}
     for agent, model_cfg in agent_configs.items():
         cls = MODEL_CLASSES[model_cfg["model_class"]]
         params = {k: (os.environ[v[4:]] if isinstance(v, str) and v.startswith("env:") else v)
                   for k, v in model_cfg.items() if k not in ("model_class", "pool")}  # `pool` = pricing metadata for the cost objective
         models[agent] = cls(**apply_role_overrides(agent, params))
-        print(f"🧩 {agent}: {params.get('model_id')} max_tokens={params.get('max_tokens')} effort={params.get('reasoning_effort')}")
+        if not quiet:
+            print(f"🧩 {agent}: {params.get('model_id')} max_tokens={params.get('max_tokens')} effort={params.get('reasoning_effort')}")
     return models 

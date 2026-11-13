@@ -21,13 +21,16 @@ from pathlib import Path
 
 _ctx = threading.local()
 _lock = threading.Lock()
-_state = {"path": None, "installed": False, "counters": defaultdict(int)}
+_state = {"path": None, "installed": False, "counters": defaultdict(int), "task_tokens": {}}
 _SECRET_ENVS = ("OPENCODE_API_KEY", "HF_TOKEN", "MALBO_API_KEY", "SERPER_API_KEY", "SERPAPI_API_KEY",
                 "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "AA_API_KEY")
 _SECRET_RE = re.compile(r"(oc_sk_[A-Za-z0-9_\-]+|hf_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_\-]{20,}|Bearer\s+[A-Za-z0-9._\-]{16,})")
 _DROP_HEADERS = {"authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie"}
 _RL_PREFIXES = ("x-ratelimit", "ratelimit", "retry-after", "x-opencode", "opencode", "llm_provider-x-ratelimit",
                 "llm_provider-ratelimit", "llm_provider-retry-after", "llm_provider-x-opencode", "llm_provider-opencode")
+
+
+_NO_STOP = set()  # models that reject the `stop` param (learned at run time)
 
 
 def set_log_path(path):
@@ -98,6 +101,28 @@ def _write(rec):
         f.write(line + "\n")
 
 
+def log_event(kind, **fields):
+    """Append one json line (retry notices etc.) to <dir of the llm log>/events.jsonl, thread-safe; also printed."""
+    rec = {"ts": datetime.now(timezone.utc).isoformat(), "kind": kind,
+           "agent": getattr(_ctx, "agent", None), "task_id": getattr(_ctx, "task_id", None), **fields}
+    line = _scrub(json.dumps(rec, ensure_ascii=False, default=str))
+    print(f"[retry] {line}")
+    path = _state["path"] or (Path(os.environ["MALBO_LLM_LOG"]) if os.getenv("MALBO_LLM_LOG") else None)
+    if path is None:
+        return
+    try:
+        with _lock, open(Path(path).parent / "events.jsonl", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception as e:
+        print(f"[llm_logger] event write failed: {type(e).__name__}")
+
+
+def task_tokens(task_id):
+    """In-memory per-question token totals {input, output, calls} (thread-safe; independent of the shared TokenTracker)."""
+    with _lock:
+        return dict(_state["task_tokens"].get(task_id) or {"input": 0, "output": 0, "calls": 0})
+
+
 def _usage(resp_dict):
     u = (resp_dict or {}).get("usage") or {}
     ptd = u.get("prompt_tokens_details") or {}
@@ -111,7 +136,7 @@ def _usage(resp_dict):
 _STD_KEYS = {"id", "choices", "created", "model", "object", "system_fingerprint", "usage", "service_tier", "provider_specific_fields"}
 
 
-def _record(kwargs, t0, t1, ttft, resp, err, streamed=False):
+def _record(kwargs, t0, t1, ttft, resp, err, streamed=False, attempt=1, will_retry=False):
     agent = getattr(_ctx, "agent", None)
     task_id = getattr(_ctx, "task_id", None)
     with _lock:
@@ -139,7 +164,7 @@ def _record(kwargs, t0, t1, ttft, resp, err, streamed=False):
         "latency_s": round(lat, 4),
         "time_to_first_token_s": None if ttft is None else round(ttft - t0, 4),
         "streaming": streamed,
-        "agent": agent, "step_index": step, "task_id": task_id,
+        "agent": agent, "step_index": step, "task_id": task_id, "attempt": attempt, "will_retry": will_retry,
         "model": kwargs.get("model"), "api_base": kwargs.get("api_base"),
         "request": {"messages": _jsonable(kwargs.get("messages")), "tools": _jsonable(kwargs.get("tools")),
                     "params": {k: _jsonable(v) for k, v in kwargs.items()
@@ -155,6 +180,10 @@ def _record(kwargs, t0, t1, ttft, resp, err, streamed=False):
         "http_status": status, "error": err_s,
         "rate_limit_headers": _rate_headers(headers), "response_headers": headers,
     }
+    if resp is not None:
+        with _lock:
+            tt = _state["task_tokens"].setdefault(task_id, {"input": 0, "output": 0, "calls": 0})
+            tt["input"] += pt; tt["output"] += ct; tt["calls"] += 1
     try:
         _write(rec)
     except Exception as e:  # never break the run because of logging
@@ -174,15 +203,35 @@ def install():
                 kwargs["extra_headers"] = json.loads(eh)
             except Exception:
                 pass
-        t0 = time.time()
-        try:
-            resp = orig(*args, **kwargs)
-        except Exception as e:
-            _record(kwargs, t0, time.time(), None, None, e)
-            raise
+        from . import retry as _retry
+        if kwargs.get("model") in _NO_STOP:
+            kwargs.pop("stop", None)
+        for attempt in range(1, _retry.MAX_TRIES + 1):
+            t0 = time.time()
+            try:
+                resp = orig(*args, **kwargs)
+                break
+            except Exception as e:
+                if type(e).__name__ == "UnsupportedParamsError" and "'stop'" in str(e) and kwargs.get("stop") is not None \
+                        and attempt < _retry.MAX_TRIES:
+                    # e.g. gpt-6-luna rejects `stop`: remember the model, resend without it (no sleep)
+                    _NO_STOP.add(kwargs.get("model"))
+                    kwargs.pop("stop", None)
+                    _record(kwargs, t0, time.time(), None, None, e, attempt=attempt, will_retry=True)
+                    log_event("drop_stop_param", model=kwargs.get("model"))
+                    continue
+                will = attempt < _retry.MAX_TRIES and _retry.llm_error_retryable(e)
+                _record(kwargs, t0, time.time(), None, None, e, attempt=attempt, will_retry=will)
+                if not will:
+                    raise
+                delay = _retry.backoff_delay(attempt, _retry.retry_after_of(e))
+                log_event("llm_retry", attempt=attempt, max_tries=_retry.MAX_TRIES, delay_s=round(delay, 2),
+                          status=getattr(e, "status_code", None), model=kwargs.get("model"),
+                          error=f"{type(e).__name__}: {e}"[:300])
+                time.sleep(delay)
         if kwargs.get("stream"):
             return _wrap_stream(resp, kwargs, t0)
-        _record(kwargs, t0, time.time(), None, resp, None)
+        _record(kwargs, t0, time.time(), None, resp, None, attempt=attempt)
         return resp
 
     litellm.completion = wrapped

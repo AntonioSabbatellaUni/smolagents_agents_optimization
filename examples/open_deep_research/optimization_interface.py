@@ -49,7 +49,7 @@ class GaiaOptimizationInterface:
     
     def evaluate_configuration(
         self, agent_model_configs: Dict[str, Any], dataset_limits: Optional[Dict[str, int]] = None,
-        run_name: Optional[str] = None, concurrency: int = 1, random_seed: int = 42,
+        run_name: Optional[str] = None, concurrency: Optional[int] = None, random_seed: int = 42,
         save_detailed_results: bool = False
     ) -> Tuple[float, float, Path]:
         """
@@ -59,7 +59,7 @@ class GaiaOptimizationInterface:
             agent_model_configs: Model configuration for each agent role
             dataset_limits: Number of questions per task level
             run_name: Unique identifier for this evaluation
-            concurrency: Number of parallel workers
+            concurrency: Number of questions answered at the same time; None -> env MALBO_PARALLEL_TASKS (default 1)
             random_seed: Seed for reproducible dataset subset
             save_detailed_results: Whether to save detailed logs
             
@@ -73,7 +73,10 @@ class GaiaOptimizationInterface:
         if dataset_limits is None:
             dataset_limits = self.base_config.get('dataset_limits', {'task_1': 3, 'task_2': 0, 'task_3': 0})
         
-        print(f"🚀 Starting evaluation: {run_name}")
+        if concurrency is None:
+            concurrency = int(os.getenv("MALBO_PARALLEL_TASKS") or 1)
+        concurrency = max(1, int(concurrency))
+        print(f"🚀 Starting evaluation: {run_name} (parallel questions: {concurrency})")
         
         try:
             # Load models and setup tracking
@@ -100,17 +103,35 @@ class GaiaOptimizationInterface:
             retry_config = self.base_config.get('retry_config', 
                 {"max_retries": 2, "base_delay": 1.0, "backoff_factor": 2.0})
             
-            if concurrency == 1:
+            from utils.session_progress import SessionProgress
+            progress = SessionProgress(session_dir, run_name, len(subset_questions), concurrency)
+            parallel = concurrency > 1
+            # parallel: every question builds its own model objects (+ own agents/tools/browser) -> nothing mutable is shared
+            factory = (lambda: load_agent_models(agent_model_configs, quiet=True)) if parallel else None
+
+            def run_one(example, i):
+                progress.start(i, example["task_id"])
+                try:
+                    r = answer_single_question_with_tracking(example, models, run_manager, retry_config, i,
+                                                             models_factory=factory, parallel=parallel)
+                except Exception as e:  # answer_single_question already catches; belt and braces
+                    r = {"question_index": i, "question": example["question"], "true_answer": str(example["true_answer"]),
+                         "prediction": None, "is_correct": False, "task_level": example["task"], "task_id": example["task_id"],
+                         "parsing_error": False, "iteration_limit_exceeded": False, "agent_error": str(e),
+                         "duration_seconds": 0, "token_counts": {"input": 0, "output": 0}}
+                progress.finish(i, example["task_id"], r)
+                return r
+
+            if not parallel:
                 for i, example in enumerate(tqdm(subset_questions, desc="Processing questions")):
-                    result = answer_single_question_with_tracking(example, models, run_manager, retry_config, i)
-                    results.append(result)
+                    results.append(run_one(example, i))
             else:
                 with ThreadPoolExecutor(max_workers=concurrency) as executor:
-                    futures = {executor.submit(answer_single_question_with_tracking, example, models, 
-                              run_manager, retry_config, i): i for i, example in enumerate(subset_questions)}
-                    
+                    futures = {executor.submit(run_one, example, i): i for i, example in enumerate(subset_questions)}
                     for future in tqdm(as_completed(futures), total=len(futures), desc="Processing questions"):
                         results.append(future.result())
+                results.sort(key=lambda r: r.get("question_index", 0))
+            progress.close()
             
             # Calculate metrics and agent-specific cost breakdown
             final_metrics = calculate_final_metrics(results)
@@ -149,7 +170,7 @@ class GaiaOptimizationInterface:
             print(f"  Total: ${total_cost:.6f}")
             print(f"✅ Evaluation complete: {accuracy:.2f}% accuracy, ${total_cost:.6f} cost")
             
-            return accuracy, total_cost, session_dir
+            return accuracy, total_cost, Path(session_dir).resolve()
             
         except Exception as e:
             print(f"❌ Evaluation failed: {e}")
