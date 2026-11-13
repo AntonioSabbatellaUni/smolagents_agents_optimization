@@ -77,7 +77,7 @@ class GaiaOptimizationInterface:
         
         try:
             # Load models and setup tracking
-            models = load_agent_models(agent_model_configs)
+            models = load_agent_models(agent_model_configs)  # strips the non-model `pool` key
             run_manager = EnhancedRunManager()
             session_dir = run_manager.setup_session("optimization", f"subset_{run_name}")
             run_manager.start_run()
@@ -116,36 +116,27 @@ class GaiaOptimizationInterface:
             final_metrics = calculate_final_metrics(results)
             accuracy = final_metrics.get("overall_accuracy", 0.0)
             
-            # Get granular cost calculation per agent
-            all_calls = run_manager.get_token_tracker().get_all_calls()
-            cost_estimator = CostEstimator()
-            total_cost = 0.0
+            # Cost objective: tokens x AA prices of the pool row of each role (from <session>/llm_calls.jsonl);
+            # falls back to the old CostEstimator only if the log is missing / roles carry no pool prices.
             cost_breakdown = {}
-            
-            # Aggregate tokens per agent
-            tokens_per_agent = {}
-            for call in all_calls:
-                agent_name = call.agent_name
-                if agent_name not in tokens_per_agent:
-                    tokens_per_agent[agent_name] = {'input': 0, 'output': 0}
-                tokens_per_agent[agent_name]['input'] += call.input_tokens
-                tokens_per_agent[agent_name]['output'] += call.output_tokens
-            
-            # Calculate cost for each agent with its specific model
-            for agent_name, token_usage in tokens_per_agent.items():
-                if agent_name in agent_model_configs:
-                    model_id = agent_model_configs[agent_name].get('model_id', 'gpt-4o-mini')
-                    cost_estimate = cost_estimator.estimate_cost(
-                        model_name=model_id, input_tokens=token_usage['input'], 
-                        output_tokens=token_usage['output']
-                    )
-                    agent_cost = cost_estimate.get("total_cost", 0.0)
-                    total_cost += agent_cost
-                    cost_breakdown[agent_name] = {
-                        'model_id': model_id, 'cost': agent_cost,
-                        'tokens': token_usage['input'] + token_usage['output']
-                    }
-            
+            total_cost = None
+            prices = {r: c["pool"] for r, c in agent_model_configs.items() if isinstance(c, dict) and c.get("pool")}
+            if prices:
+                try:
+                    from utils.pool_cost import evaluation_costs
+                    rep = evaluation_costs(Path(session_dir) / "llm_calls.jsonl", prices)
+                    total_cost = rep["aa_cost"]
+                    (Path(session_dir) / "cost_report.json").write_text(json.dumps(rep, indent=1))
+                    for r, d in rep["per_role"].items():
+                        cost_breakdown[r] = {'model_id': d["model"], 'cost': d["aa_cost"], 'tokens': d["input"] + d["cache_read"] + d["output"]}
+                    print(f"💰 aa_cost=${rep['aa_cost']:.6f} go_expected=${rep['go_expected']:.6f} go_list_cost=${rep['go_list_cost']:.6f} "
+                          f"go_allowance=${rep['go_allowance']:.6f} calls={rep['n_calls']} unpriced={rep['n_unpriced']} "
+                          f"{'MISMATCH(>2%)' if rep['mismatch'] else 'consistent'}")
+                except FileNotFoundError:
+                    print("⚠️ WARNING: llm_calls.jsonl missing -> falling back to the old CostEstimator")
+            if total_cost is None:
+                total_cost = self._legacy_cost(run_manager, agent_model_configs, cost_breakdown)
+
             # Enhanced result output with cost breakdown
             if save_detailed_results:
                 execution_time = time.time() - run_manager.start_time
@@ -163,6 +154,24 @@ class GaiaOptimizationInterface:
         except Exception as e:
             print(f"❌ Evaluation failed: {e}")
             return 0.0, 0.0, Path("./error")
+
+    @staticmethod
+    def _legacy_cost(run_manager, agent_model_configs, cost_breakdown) -> float:
+        all_calls = run_manager.get_token_tracker().get_all_calls()
+        cost_estimator = CostEstimator()
+        total_cost = 0.0
+        tokens_per_agent = {}
+        for call in all_calls:
+            t = tokens_per_agent.setdefault(call.agent_name, {'input': 0, 'output': 0})
+            t['input'] += call.input_tokens
+            t['output'] += call.output_tokens
+        for agent_name, tu in tokens_per_agent.items():
+            if agent_name in agent_model_configs:
+                model_id = agent_model_configs[agent_name].get('model_id', 'gpt-4o-mini')
+                c = cost_estimator.estimate_cost(model_name=model_id, input_tokens=tu['input'], output_tokens=tu['output']).get("total_cost", 0.0)
+                total_cost += c
+                cost_breakdown[agent_name] = {'model_id': model_id, 'cost': c, 'tokens': tu['input'] + tu['output']}
+        return total_cost
 
 
 def evaluate_configuration(agent_model_configs: Dict[str, Any], dataset_limits: Optional[Dict[str, int]] = None,

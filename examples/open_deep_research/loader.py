@@ -54,7 +54,13 @@ def apply_role_overrides(role: str, params: dict) -> dict:
         print(f"ℹ️ {role}: max_tokens {want} capped to model limit.output={cap}")
         want = cap
     params["max_tokens"] = want
-    effort = os.getenv(f"MALBO_REASONING_EFFORT_{R}") or os.getenv("MALBO_REASONING_EFFORT")
+    if "reasoning_effort" in params:
+        # per-role config value (pool row) takes precedence over env; empty/None = send nothing (env ignored)
+        effort = params.pop("reasoning_effort") or None
+        if not effort:
+            return params
+    else:
+        effort = os.getenv(f"MALBO_REASONING_EFFORT_{R}") or os.getenv("MALBO_REASONING_EFFORT")
     if effort and effort != "none":
         if effort in _supported_efforts(params.get("model_id", "")):
             params["reasoning_effort"] = effort
@@ -68,7 +74,7 @@ def load_agent_models(agent_configs):
     for agent, model_cfg in agent_configs.items():
         cls = MODEL_CLASSES[model_cfg["model_class"]]
         params = {k: (os.environ[v[4:]] if isinstance(v, str) and v.startswith("env:") else v)
-                  for k, v in model_cfg.items() if k != "model_class"}
+                  for k, v in model_cfg.items() if k not in ("model_class", "pool")}  # `pool` = pricing metadata for the cost objective
         models[agent] = cls(**apply_role_overrides(agent, params))
         print(f"🧩 {agent}: {params.get('model_id')} max_tokens={params.get('max_tokens')} effort={params.get('reasoning_effort')}")
     return models 
