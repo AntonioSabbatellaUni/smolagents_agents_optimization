@@ -67,6 +67,12 @@ If you are unable to determine the final answer, output 'FINAL ANSWER: Unable to
     )
 
     response = reformulation_model(messages).content
+    if not (response or "").strip():
+        # revival: reasoning models can burn the whole max_tokens on hidden reasoning (finish_reason=length, content="").
+        # Retry once with a 4x larger budget (up to 32768) before giving up.
+        base = (getattr(reformulation_model, "kwargs", None) or {}).get("max_tokens") or 4096
+        print(f"⚠️ empty reformulator answer; retrying with max_tokens={min(base * 4, 32768)}")
+        response = reformulation_model(messages, max_tokens=min(base * 4, 32768)).content or ""
 
     final_answer = response.split("FINAL ANSWER: ")[-1].strip()
     print("> Reformulated answer: ", final_answer)

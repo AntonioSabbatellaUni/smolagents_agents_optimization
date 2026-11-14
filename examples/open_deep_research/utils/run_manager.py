@@ -51,6 +51,9 @@ class EnhancedRunManager:
         # Save config copy
         self.session_manager.save_config_copy("agent_models.yaml")
         
+        from . import llm_logger  # revival: log every LiteLLM call to <session>/llm_calls.jsonl
+        llm_logger.install()
+        llm_logger.set_log_path(session_dir / "llm_calls.jsonl")
         print(f"Created session: {session_dir}")
         print(f"Question: {question}")
         

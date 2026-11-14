@@ -1,5 +1,7 @@
 # Agent creation and management utilities for GAIA evaluation
 import os
+import threading
+import time
 from typing import Dict
 from pathlib import Path
 
@@ -16,8 +18,9 @@ from scripts.text_web_browser import (
 from scripts.visual_qa import VisualQATool
 from scripts.run_agents import get_single_file_description, get_zip_description
 
-from smolagents import CodeAgent, GoogleSearchTool, ToolCallingAgent
+from smolagents import CodeAgent, GoogleSearchTool, ToolCallingAgent, DuckDuckGoSearchTool
 from utils import EnhancedRunManager
+from utils.retry import call_with_retry, search_error_retryable
 
 
 BROWSER_CONFIG = {
@@ -33,8 +36,37 @@ BROWSER_CONFIG = {
 os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 
-def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManager):
-    """Create agent team with enhanced tracking integration."""
+class RetryingDuckDuckGoSearchTool(DuckDuckGoSearchTool):
+    """DuckDuckGo search with (a) a process-wide minimum interval between requests (shared by all question threads) and
+    (b) retry with exponential backoff + jitter on rate-limit / blocked / transient errors (max MALBO_MAX_TRIES, each retry logged)."""
+    _glock = threading.Lock()
+    _glast = 0.0
+
+    def _enforce_rate_limit(self) -> None:
+        if not self._min_interval:
+            return
+        with RetryingDuckDuckGoSearchTool._glock:
+            wait = RetryingDuckDuckGoSearchTool._glast + self._min_interval - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            RetryingDuckDuckGoSearchTool._glast = time.time()
+
+    def forward(self, query: str) -> str:
+        from utils import abort, llm_logger
+        abort.check(getattr(llm_logger._ctx, "task_id", None))
+        try:
+            return call_with_retry(lambda: DuckDuckGoSearchTool.forward(self, query), "search_retry", search_error_retryable,
+                                   tool="web_search", query=query[:80])
+        except Exception as e:
+            if search_error_retryable(e):   # still blocked / rate-limited after all retries -> answers would be degraded: pause
+                abort.trigger("web_search", None, e, task_id=getattr(llm_logger._ctx, "task_id", None), kind="infra")
+                raise abort.InfraAbort(f"paused: web search blocked: {e}"[:300]) from e
+            raise
+
+
+def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManager, task_id: str = None):
+    """Create agent team with enhanced tracking integration. Everything mutable (browser, tools, agents) is created per call,
+    so one team per question is safe across threads; the browser downloads go to a per-question folder (task_id)."""
     text_limit = 100000
     
     # Wrap models with tracking
@@ -42,10 +74,15 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     
     ti_tool = TextInspectorTool(tracked_models["text_inspector"], text_limit)
     visual_qa_tool = VisualQATool(tracked_models["visual_qa"])
-    browser = SimpleTextBrowser(**BROWSER_CONFIG)
+    browser_cfg = dict(BROWSER_CONFIG, request_kwargs=dict(BROWSER_CONFIG["request_kwargs"]))
+    if task_id:
+        dl = os.path.join(BROWSER_CONFIG["downloads_folder"], str(task_id))
+        os.makedirs(dl, exist_ok=True)
+        browser_cfg["downloads_folder"] = dl
+    browser = SimpleTextBrowser(**browser_cfg)
 
     WEB_TOOLS = [
-        GoogleSearchTool(provider="serper"),
+        (GoogleSearchTool(provider="serper") if os.getenv("SERPER_API_KEY") else RetryingDuckDuckGoSearchTool()),  # revival: DDG needs no key
         VisitTool(browser),
         PageUpTool(browser),
         PageDownTool(browser),
@@ -58,7 +95,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     text_webbrowser_agent = ToolCallingAgent(
         model=tracked_models["search_agent"],  # Use dedicated search agent model
         tools=WEB_TOOLS,
-        max_steps=20,
+        max_steps=int(os.getenv("MALBO_SEARCH_MAX_STEPS", 20)),
         verbosity_level=2,
         planning_interval=4,
         name="search_agent",
@@ -78,7 +115,7 @@ def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManage
     manager_agent = CodeAgent(
         model=tracked_models["manager"],  # Use dedicated manager model
         tools=[visual_qa_tool, ti_tool],
-        max_steps=12,
+        max_steps=int(os.getenv("MALBO_MANAGER_MAX_STEPS", 12)),
         verbosity_level=2,
         additional_authorized_imports=["*"],
         planning_interval=4,
@@ -131,6 +168,17 @@ Run verification steps if that's needed, you must make sure you find the correct
 
 def create_gaia_dataset_loader(use_raw_dataset: bool, set_to_run: str):
     """Create a GAIA dataset loader function configured for the specific setup."""
+    if os.getenv("GAIA_LOCAL_QUESTIONS") or (not os.path.exists("data/gaia") and not os.getenv("HF_TOKEN")):
+        # revival: GAIA is gated; without an HF token use the tiny local multi-hop-ish set
+        import datasets as _ds
+        path = os.getenv("GAIA_LOCAL_QUESTIONS", "local_questions.jsonl")
+        print(f"ℹ️  Using local fallback questions from {path} (GAIA gated / no HF_TOKEN)")
+        return _ds.load_dataset("json", data_files=path, split="train")
+    if not os.path.exists("data/gaia") and os.getenv("HF_TOKEN"):
+        # revival: the real gated GAIA repo only has 2023/<split>/metadata.parquet (no metadata.jsonl)
+        from huggingface_hub import snapshot_download
+        snapshot_download(repo_id="gaia-benchmark/GAIA", repo_type="dataset", local_dir="data/gaia",
+                          allow_patterns=[f"2023/{set_to_run}/*"], token=os.environ["HF_TOKEN"])
     if not os.path.exists("data/gaia"):
         from huggingface_hub import snapshot_download
         
@@ -150,19 +198,21 @@ def create_gaia_dataset_loader(use_raw_dataset: bool, set_to_run: str):
                 ignore_patterns=[".gitattributes", "README.md"],
             )
 
-    def preprocess_file_paths(row):
-        if len(row["file_name"]) > 0:
-            row["file_name"] = f"data/gaia/{set_to_run}/" + row["file_name"]
-        return row
-
+    # revival: GAIA.py (script dataset) is unsupported by datasets>=4 -> read metadata.jsonl directly
     import datasets
-    eval_ds = datasets.load_dataset(
-        "data/gaia/GAIA.py",
-        name="2023_all",
-        split=set_to_run,
-        # data_files={"validation": "validation/metadata.jsonl", "test": "test/metadata.jsonl"},
-    )
-
-    eval_ds = eval_ds.rename_columns({"Question": "question", "Final answer": "true_answer", "Level": "task"})
-    eval_ds = eval_ds.map(preprocess_file_paths)
-    return eval_ds
+    import json as _json
+    meta = next((m for m in (Path("data/gaia/2023") / set_to_run / "metadata.jsonl", Path("data/gaia") / set_to_run / "metadata.jsonl",
+                             Path("data/gaia/2023") / set_to_run / "metadata.parquet", Path("data/gaia") / set_to_run / "metadata.parquet")
+                 if m.exists()), None)
+    if meta is None:
+        raise FileNotFoundError("no GAIA metadata.jsonl/parquet under data/gaia")
+    if meta.suffix == ".parquet":
+        import pandas as _pd
+        rows = _pd.read_parquet(meta).to_dict("records")
+    else:
+        rows = [_json.loads(l) for l in meta.read_text().splitlines() if l.strip()]
+    for r in rows:
+        r["file_name"] = str(meta.parent / r["file_name"]) if r.get("file_name") else ""
+        r["task"] = str(r.pop("Level")); r["question"] = r.pop("Question"); r["true_answer"] = r.pop("Final answer")
+        r.pop("Annotator Metadata", None)
+    return datasets.Dataset.from_list(rows)

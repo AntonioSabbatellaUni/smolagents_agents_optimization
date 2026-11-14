@@ -1,0 +1,3 @@
+{"question": "What is the capital city of the country where the Eiffel Tower is located? Answer with the city name only.", "true_answer": "Paris", "task": "1", "task_id": "local-1", "file_name": ""}
+{"question": "Who wrote the novel 'Pride and Prejudice'? Answer with the surname only.", "true_answer": "Austen", "task": "1", "task_id": "local-2", "file_name": ""}
+{"question": "How many days are there in a leap year? Answer with the number only.", "true_answer": "366", "task": "1", "task_id": "local-3", "file_name": ""}

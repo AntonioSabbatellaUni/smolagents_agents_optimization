@@ -8,58 +8,11 @@ from io import BytesIO
 import PIL.Image
 import requests
 from dotenv import load_dotenv
-from huggingface_hub import InferenceClient
 
 from smolagents import Tool, tool
 
 
 load_dotenv(override=True)
-
-
-def process_images_and_text(image_path, query, client):
-    from transformers import AutoProcessor
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": query},
-            ],
-        },
-    ]
-    idefics_processor = AutoProcessor.from_pretrained("HuggingFaceM4/idefics2-8b-chatty")
-    prompt_with_template = idefics_processor.apply_chat_template(messages, add_generation_prompt=True)
-
-    # load images from local directory
-
-    # encode images to strings which can be sent to the endpoint
-    def encode_local_image(image_path):
-        # load image
-        image = PIL.Image.open(image_path).convert("RGB")
-
-        # Convert the image to a base64 string
-        buffer = BytesIO()
-        image.save(buffer, format="JPEG")  # Use the appropriate format (e.g., JPEG, PNG)
-        base64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-        # add string formatting required by the endpoint
-        image_string = f"data:image/jpeg;base64,{base64_image}"
-
-        return image_string
-
-    image_string = encode_local_image(image_path)
-    prompt_with_images = prompt_with_template.replace("<image>", "![]({}) ").format(image_string)
-
-    payload = {
-        "inputs": prompt_with_images,
-        "parameters": {
-            "return_full_text": False,
-            "max_new_tokens": 200,
-        },
-    }
-
-    return json.loads(client.post(json=payload).decode())[0]
 
 
 # Function to encode the image
@@ -93,16 +46,76 @@ def encode_image(image_path):
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
-def resize_image(image_path):
+def resize_image(image_path, max_side=1568):
+    """Downscale (keeping aspect ratio) so the data URL stays small; returns the new path."""
     img = PIL.Image.open(image_path)
     width, height = img.size
-    img = img.resize((int(width / 2), int(height / 2)))
-    new_image_path = f"resized_{image_path}"
-    img.save(new_image_path)
+    scale = min(1.0, max_side / max(width, height))
+    img = img.convert("RGB").resize((max(1, int(width * scale)), max(1, int(height * scale))))
+    base, _ = os.path.splitext(image_path)
+    new_image_path = f"{base}_resized.jpg"
+    img.save(new_image_path, format="JPEG", quality=90)
     return new_image_path
 
 
+def image_to_data_url(image_path: str, max_bytes: int = 3_000_000) -> str:
+    """Local file or http(s) URL -> `data:<mime>;base64,...` (png/jpeg kept as is when small, else re-encoded as JPEG)."""
+    if image_path.startswith("http"):
+        os.makedirs("downloads", exist_ok=True)
+        image_path = _download(image_path)
+    mime, _ = mimetypes.guess_type(image_path)
+    if mime not in ("image/png", "image/jpeg") or os.path.getsize(image_path) > max_bytes:
+        image_path = resize_image(image_path)
+        mime = "image/jpeg"
+    with open(image_path, "rb") as f:
+        return f"data:{mime};base64,{base64.b64encode(f.read()).decode('utf-8')}"
+
+
+def _download(url: str) -> str:
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+    response = requests.get(url, headers={"User-Agent": user_agent}, stream=True)
+    response.raise_for_status()
+    ext = mimetypes.guess_extension(response.headers.get("content-type", "").split(";")[0]) or ".download"
+    path = os.path.abspath(os.path.join("downloads", str(uuid.uuid4()) + ext))
+    with open(path, "wb") as fh:
+        for chunk in response.iter_content(chunk_size=512):
+            fh.write(chunk)
+    return path
+
+
+def vision_messages(image_path: str, question: str) -> list[dict]:
+    """OpenAI-style content parts: text + image_url (base64 data URL)."""
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question},
+                {"type": "image_url", "image_url": {"url": image_to_data_url(image_path)}},
+            ],
+        }
+    ]
+
+
+def vision_call_kwargs(model_id: str) -> dict:
+    """Extra completion kwargs for the vision call. DeepSeek v4.x on Go is a reasoning model that burns the whole token
+    budget on hidden reasoning for images (empty content, finish_reason=length) -> disable thinking for it.
+    Override with env MALBO_VISUAL_QA_EXTRA_BODY (JSON dict, {} = nothing); optional hard cap with MALBO_VISUAL_QA_MAX_TOKENS."""
+    kw = {}  # max_tokens comes from the role model config (>= 32768, see loader.apply_role_overrides)
+    if os.getenv("MALBO_VISUAL_QA_MAX_TOKENS"):
+        kw["max_tokens"] = int(os.environ["MALBO_VISUAL_QA_MAX_TOKENS"])
+    raw = os.getenv("MALBO_VISUAL_QA_EXTRA_BODY")
+    body = json.loads(raw) if raw else ({"thinking": {"type": "disabled"}} if "deepseek" in (model_id or "") else {})
+    if body:
+        kw["extra_body"] = body
+    return kw
+
+
+DEFAULT_VISUAL_QA_MODEL = os.getenv("MALBO_VISUAL_QA_MODEL_ID", "openai/deepseek-v4.1-flash")
+
+
 class VisualQATool(Tool):
+    """Answers questions about an image through a LiteLLM vision call (model = the `visual_qa` role model)."""
+
     name = "visualizer"
     description = "A tool that can answer questions about attached images."
     inputs = {
@@ -114,36 +127,39 @@ class VisualQATool(Tool):
     }
     output_type = "string"
 
-    def __init__(self, client):
+    def __init__(self, model):
         super().__init__()
-        self.client = client
+        self.model = model
 
     def forward(self, image_path: str, question: str | None = None) -> str:
-        output = ""
         add_note = False
         if not question:
             add_note = True
             question = "Please write a detailed caption for this image."
-        try:
-            output = process_images_and_text(image_path, question, self.client)
-        except Exception as e:
-            print(e)
-            if "Payload Too Large" in str(e):
-                new_image_path = resize_image(image_path)
-                output = process_images_and_text(new_image_path, question, self.client)
+        if not isinstance(image_path, str):
+            raise Exception("You should provide at least `image_path` string argument to this tool!")
+        if getattr(self.model, "flatten_messages_as_text", False):
+            raise Exception("visual_qa model is configured with flatten_messages_as_text=True: images are not supported")
+        # "image_url" content parts are passed through untouched by get_clean_message_list.
+        from smolagents.models import ChatMessage
 
+        resp = self.model([ChatMessage.from_dict(m) for m in vision_messages(image_path, question)],
+                          **vision_call_kwargs(getattr(self.model, "model_id", "")))
+        output = resp.content
+        if isinstance(output, list):
+            output = " ".join(p.get("text", "") for p in output if isinstance(p, dict))
+        if not output:
+            raise Exception("The vision model returned an empty answer (it may have run out of tokens while reasoning).")
         if add_note:
             output = (
                 f"You did not provide a particular question, so here is a detailed caption for the image: {output}"
             )
-
         return output
 
 
-# Helper to create VisualQATool from config-driven client
+# Helper to create VisualQATool from config-driven model
 def create_visual_qa_tool(model):
-    # model is expected to be an InferenceClientModel or similar with a .client attribute
-    return VisualQATool(model.client)
+    return VisualQATool(model)
 
 
 @tool
@@ -154,44 +170,18 @@ def visualizer(image_path: str, question: str | None = None) -> str:
         image_path: The path to the image on which to answer the question. This should be a local path to downloaded image.
         question: The question to answer.
     """
-    import mimetypes
-    import os
+    import litellm
 
-    import requests
-
-    from .visual_qa import encode_image
-
-    add_note = False
-    if not question:
-        add_note = True
-        question = "Please write a detailed caption for this image."
     if not isinstance(image_path, str):
         raise Exception("You should provide at least `image_path` string argument to this tool!")
-
-    mime_type, _ = mimetypes.guess_type(image_path)
-    base64_image = encode_image(image_path)
-
-    payload = {
-        "model": "gpt-4o",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": question},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}},
-                ],
-            }
-        ],
-        "max_tokens": 1000,
-    }
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"}
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-    try:
-        output = response.json()["choices"][0]["message"]["content"]
-    except Exception:
-        raise Exception(f"Response format unexpected: {response.json()}")
-
+    add_note = not question
+    question = question or "Please write a detailed caption for this image."
+    kw = {}
+    if os.getenv("MALBO_API_BASE"):
+        kw = dict(api_base=os.environ["MALBO_API_BASE"], api_key=os.getenv("OPENCODE_API_KEY") or os.getenv("MALBO_API_KEY"))
+    response = litellm.completion(model=DEFAULT_VISUAL_QA_MODEL, messages=vision_messages(image_path, question),
+                                  **vision_call_kwargs(DEFAULT_VISUAL_QA_MODEL), **kw)
+    output = response.choices[0].message.content or ""
     if add_note:
         output = f"You did not provide a particular question, so here is a detailed caption for the image: {output}"
-
     return output

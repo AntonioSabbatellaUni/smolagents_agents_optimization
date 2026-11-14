@@ -36,4 +36,5 @@ PyPDF2
 python-pptx
 torch
 xlrd
-SpeechRecognition
+mcp
+faster-whisper

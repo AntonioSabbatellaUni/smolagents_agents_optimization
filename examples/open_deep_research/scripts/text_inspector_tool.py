@@ -1,5 +1,5 @@
 from smolagents import Tool
-from smolagents.models import Model
+from smolagents.models import ChatMessage, Model
 
 
 class TextInspectorTool(Tool):
@@ -71,7 +71,7 @@ This tool handles the following file extensions: [".html", ".htm", ".xlsx", ".pp
                 ],
             },
         ]
-        return self.model(messages).content
+        return self.model([ChatMessage.from_dict(m) for m in messages]).content
 
     def forward(self, file_path, question: str | None = None) -> str:
         from smolagents.models import MessageRole
@@ -121,4 +121,4 @@ This tool handles the following file extensions: [".html", ".htm", ".xlsx", ".pp
                 ],
             },
         ]
-        return self.model(messages).content
+        return self.model([ChatMessage.from_dict(m) for m in messages]).content

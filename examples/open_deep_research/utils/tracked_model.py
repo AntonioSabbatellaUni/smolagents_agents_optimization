@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Generator
 from smolagents.models import Model, ChatMessage
 
 from .token_tracker import TokenTracker
+from . import llm_logger
 
 
 class TrackedModel:
@@ -64,6 +65,7 @@ class TrackedModel:
     
     def generate(self, messages: List[ChatMessage], **kwargs) -> ChatMessage:
         """Generate response and track token usage."""
+        llm_logger.set_agent(self.agent_name)
         start_time = time.time()
         
         # Extract input content for logging
@@ -113,6 +115,7 @@ class TrackedModel:
     
     def generate_stream(self, messages: List[ChatMessage], **kwargs) -> Generator:
         """Generate streaming response and track token usage."""
+        llm_logger.set_agent(self.agent_name)
         start_time = time.time()
         
         # Extract input content for logging

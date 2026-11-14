@@ -36,7 +36,8 @@ from utils.cost_estimator import CostEstimator
 
 
 load_dotenv(override=True)
-login(os.getenv("HF_TOKEN"))
+if os.getenv("HF_TOKEN"):
+    login(os.getenv("HF_TOKEN"))
 
 append_answer_lock = threading.Lock()
 
@@ -65,9 +66,11 @@ def load_gaia_dataset(use_raw_dataset: bool, set_to_run: str):
 
 def answer_single_question_with_tracking(
     example: dict, models: Dict, run_manager: EnhancedRunManager, 
-    retry_config: Dict, question_index: int
+    retry_config: Dict, question_index: int, models_factory=None, parallel: bool = False
 ) -> Dict:
-    """Answer a single question with enhanced tracking and retry logic."""
+    """Answer a single question with enhanced tracking and retry logic.
+    models_factory: when given, a fresh models dict is built for every attempt (no model object shared between threads).
+    parallel: do not reset the shared token tracker (other questions are using it); per-question tokens come from llm_logger."""
     max_retries = retry_config["max_retries"]
     base_delay = retry_config["base_delay"]
     backoff_factor = retry_config["backoff_factor"]
@@ -75,9 +78,14 @@ def answer_single_question_with_tracking(
     for attempt in range(max_retries + 1):
         try:
             # Reset session tracking for this question
-            run_manager.token_tracker.reset_session()
+            if not parallel:
+                run_manager.token_tracker.reset_session()
+            from utils import llm_logger
+            llm_logger.set_task(example["task_id"])
+            if models_factory is not None:
+                models = models_factory()
             
-            agent = create_agent_team_with_tracking(models, run_manager)
+            agent = create_agent_team_with_tracking(models, run_manager, task_id=example["task_id"])
 
             # Process file attachments using modular function with tracking
             augmented_question = process_file_attachments(example, models, run_manager)
@@ -119,12 +127,15 @@ def answer_single_question_with_tracking(
             
             # Get token counts from tracking
             try:
-                # Get token counts from our enhanced tracking system
-                session_summary = run_manager.token_tracker.get_session_summary()
-                total_token_counts = {
-                    "input": session_summary.get("total_input_tokens", 0),
-                    "output": session_summary.get("total_output_tokens", 0)
-                }
+                if parallel:  # per-question totals from the thread-safe llm_logger counters
+                    tt = llm_logger.task_tokens(example["task_id"])
+                    total_token_counts = {"input": tt["input"], "output": tt["output"]}
+                else:
+                    session_summary = run_manager.token_tracker.get_session_summary()
+                    total_token_counts = {
+                        "input": session_summary.get("total_input_tokens", 0),
+                        "output": session_summary.get("total_output_tokens", 0)
+                    }
             except Exception as e:
                 print(f"⚠️  Token tracking error: {e}")
                 total_token_counts = {"input": 0, "output": 0}
