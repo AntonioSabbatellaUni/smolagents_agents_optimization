@@ -31,6 +31,7 @@ _RL_PREFIXES = ("x-ratelimit", "ratelimit", "retry-after", "x-opencode", "openco
 
 
 _NO_STOP = set()  # models that reject the `stop` param (learned at run time)
+_AUTO_TOOL_CHOICE = set()  # models that only accept tool_choice="auto" (e.g. muse-spark), learned at run time
 
 
 def set_log_path(path):
@@ -206,6 +207,8 @@ def install():
         from . import retry as _retry
         if kwargs.get("model") in _NO_STOP:
             kwargs.pop("stop", None)
+        if kwargs.get("model") in _AUTO_TOOL_CHOICE and kwargs.get("tool_choice") not in (None, "auto"):
+            kwargs["tool_choice"] = "auto"
         from . import abort as _abort
         for attempt in range(1, _retry.MAX_TRIES + 1):
             _abort.check(getattr(_ctx, "task_id", None))   # evaluation paused -> stop this question at once
@@ -223,6 +226,14 @@ def install():
                     kwargs.pop("stop", None)
                     _record(kwargs, t0, time.time(), None, None, e, attempt=attempt, will_retry=True)
                     log_event("drop_stop_param", model=kwargs.get("model"))
+                    continue
+                if kwargs.get("tools") and kwargs.get("tool_choice") not in (None, "auto") and attempt < _retry.MAX_TRIES and \
+                        "tool_choice" in es and "auto" in es:
+                    # e.g. muse-spark: only tool_choice="auto" -> remember the model, resend with "auto" (no sleep)
+                    _AUTO_TOOL_CHOICE.add(kwargs.get("model"))
+                    kwargs["tool_choice"] = "auto"
+                    _record(kwargs, t0, time.time(), None, None, e, attempt=attempt, will_retry=True)
+                    log_event("tool_choice_auto", model=kwargs.get("model"))
                     continue
                 quota_hit = _abort.is_quota_text(e) and getattr(e, "status_code", None) in (None, 402, 403, 429)
                 will = attempt < _retry.MAX_TRIES and _retry.llm_error_retryable(e) and not quota_hit
