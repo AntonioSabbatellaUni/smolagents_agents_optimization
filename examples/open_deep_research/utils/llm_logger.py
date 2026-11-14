@@ -214,8 +214,10 @@ def install():
                 resp = orig(*args, **kwargs)
                 break
             except Exception as e:
-                if type(e).__name__ == "UnsupportedParamsError" and "'stop'" in str(e) and kwargs.get("stop") is not None \
-                        and attempt < _retry.MAX_TRIES:
+                es = str(e).lower()
+                if kwargs.get("stop") is not None and attempt < _retry.MAX_TRIES and \
+                        type(e).__name__ in ("UnsupportedParamsError", "BadRequestError") and \
+                        ("'stop'" in es or "stop sequences" in es or "stop:" in es or "param 'stop'" in es):
                     # e.g. gpt-6-luna rejects `stop`: remember the model, resend without it (no sleep)
                     _NO_STOP.add(kwargs.get("model"))
                     kwargs.pop("stop", None)
@@ -232,6 +234,19 @@ def install():
                         _abort.trigger("llm", kwargs.get("model"), e, task_id=getattr(_ctx, "task_id", None))
                         log_event("pause", model=kwargs.get("model"), status=st, error=f"{type(e).__name__}: {e}"[:300])
                         raise _abort.InfraAbort(f"paused: {type(e).__name__}: {e}"[:300]) from e
+                    if st == 400 or type(e).__name__ in ("BadRequestError", "UnsupportedParamsError"):
+                        # the same 400 again and again = a model/config incompatibility (not the question): results would be
+                        # silently degraded (e.g. a sub-agent that never works) -> pause instead (context-length errors excluded)
+                        if not any(t in es for t in ("context length", "context_length", "maximum context", "too long", "max_tokens")):
+                            sig = (kwargs.get("model"), re.sub(r"\d+", "#", es)[:160])
+                            with _lock:
+                                _state["counters"][("bad_request",) + sig] += 1
+                                n_bad = _state["counters"][("bad_request",) + sig]
+                            if n_bad >= int(os.getenv("MALBO_MAX_SAME_400", "3")):
+                                _abort.trigger("llm", kwargs.get("model"), e, task_id=getattr(_ctx, "task_id", None), kind="infra")
+                                log_event("pause", model=kwargs.get("model"), status=st, reason="repeated_400",
+                                          error=f"{type(e).__name__}: {e}"[:300])
+                                raise _abort.InfraAbort(f"paused: repeated 400: {type(e).__name__}: {e}"[:300]) from e
                     raise
                 delay = _retry.backoff_delay(attempt, _retry.retry_after_of(e))
                 log_event("llm_retry", attempt=attempt, max_tries=_retry.MAX_TRIES, delay_s=round(delay, 2),

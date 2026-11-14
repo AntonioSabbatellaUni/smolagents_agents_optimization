@@ -141,6 +141,9 @@ class GaiaOptimizationInterface:
 
             from utils import abort
             abort.reset()
+            from utils import llm_logger as _ll
+            for k in [k for k in _ll._state["counters"] if k and k[0] == "bad_request"]:
+                del _ll._state["counters"][k]   # repeated-400 detector counts per evaluation
             prices = {r: c["pool"] for r, c in agent_model_configs.items() if isinstance(c, dict) and c.get("pool")}
             # Question cache (resume after a pause): completed questions of this exact config + task list are not run again.
             qcache = QuestionCache(agent_model_configs, [q["task_id"] for q in subset_questions])
