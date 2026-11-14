@@ -206,7 +206,9 @@ def install():
         from . import retry as _retry
         if kwargs.get("model") in _NO_STOP:
             kwargs.pop("stop", None)
+        from . import abort as _abort
         for attempt in range(1, _retry.MAX_TRIES + 1):
+            _abort.check(getattr(_ctx, "task_id", None))   # evaluation paused -> stop this question at once
             t0 = time.time()
             try:
                 resp = orig(*args, **kwargs)
@@ -220,9 +222,16 @@ def install():
                     _record(kwargs, t0, time.time(), None, None, e, attempt=attempt, will_retry=True)
                     log_event("drop_stop_param", model=kwargs.get("model"))
                     continue
-                will = attempt < _retry.MAX_TRIES and _retry.llm_error_retryable(e)
+                quota_hit = _abort.is_quota_text(e) and getattr(e, "status_code", None) in (None, 402, 403, 429)
+                will = attempt < _retry.MAX_TRIES and _retry.llm_error_retryable(e) and not quota_hit
                 _record(kwargs, t0, time.time(), None, None, e, attempt=attempt, will_retry=will)
                 if not will:
+                    st = getattr(e, "status_code", None)
+                    if quota_hit or _retry.llm_error_retryable(e) or st in (401, 402, 403):
+                        # quota / rate limit / auth / provider down that survived the retries: pause the whole evaluation
+                        _abort.trigger("llm", kwargs.get("model"), e, task_id=getattr(_ctx, "task_id", None))
+                        log_event("pause", model=kwargs.get("model"), status=st, error=f"{type(e).__name__}: {e}"[:300])
+                        raise _abort.InfraAbort(f"paused: {type(e).__name__}: {e}"[:300]) from e
                     raise
                 delay = _retry.backoff_delay(attempt, _retry.retry_after_of(e))
                 log_event("llm_retry", attempt=attempt, max_tries=_retry.MAX_TRIES, delay_s=round(delay, 2),

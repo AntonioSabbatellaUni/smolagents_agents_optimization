@@ -52,8 +52,16 @@ class RetryingDuckDuckGoSearchTool(DuckDuckGoSearchTool):
             RetryingDuckDuckGoSearchTool._glast = time.time()
 
     def forward(self, query: str) -> str:
-        return call_with_retry(lambda: DuckDuckGoSearchTool.forward(self, query), "search_retry", search_error_retryable,
-                               tool="web_search", query=query[:80])
+        from utils import abort, llm_logger
+        abort.check(getattr(llm_logger._ctx, "task_id", None))
+        try:
+            return call_with_retry(lambda: DuckDuckGoSearchTool.forward(self, query), "search_retry", search_error_retryable,
+                                   tool="web_search", query=query[:80])
+        except Exception as e:
+            if search_error_retryable(e):   # still blocked / rate-limited after all retries -> answers would be degraded: pause
+                abort.trigger("web_search", None, e, task_id=getattr(llm_logger._ctx, "task_id", None), kind="infra")
+                raise abort.InfraAbort(f"paused: web search blocked: {e}"[:300]) from e
+            raise
 
 
 def create_agent_team_with_tracking(models: Dict, run_manager: EnhancedRunManager, task_id: str = None):

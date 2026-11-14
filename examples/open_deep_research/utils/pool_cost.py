@@ -33,8 +33,8 @@ def _tokens(usage: dict):
     return max(int((usage or {}).get("prompt_tokens") or 0) - cached, 0), cached, int((usage or {}).get("completion_tokens") or 0), oc, 0
 
 
-def evaluation_costs(jsonl_path, prices: dict, tol: float = 0.02) -> dict:
-    """Raises FileNotFoundError if the log is missing."""
+def evaluation_costs(jsonl_path, prices: dict, tol: float = 0.02, task_ids=None, exclude_task_ids=None) -> dict:
+    """Raises FileNotFoundError if the log is missing. task_ids / exclude_task_ids: only / all-but these questions' calls."""
     p = Path(jsonl_path)
     if not p.exists():
         raise FileNotFoundError(str(p))
@@ -45,6 +45,10 @@ def evaluation_costs(jsonl_path, prices: dict, tol: float = 0.02) -> dict:
             continue
         r = json.loads(line)
         if r.get("error") or not r.get("usage"):
+            continue
+        if task_ids is not None and r.get("task_id") not in task_ids:
+            continue
+        if exclude_task_ids and r.get("task_id") in exclude_task_ids:
             continue
         role = r.get("agent")
         pr = prices.get(role)
@@ -61,6 +65,22 @@ def evaluation_costs(jsonl_path, prices: dict, tol: float = 0.02) -> dict:
         out["aa_cost"] += aa; out["go_expected"] += go; out["go_list_cost"] += lc; out["go_allowance"] += al
         d = out["per_role"].setdefault(role, {"model": pr.get("name"), "calls": 0, "input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "aa_cost": 0.0})
         d["calls"] += 1; d["input"] += i; d["cache_read"] += c; d["cache_write"] += w; d["output"] += o; d["aa_cost"] += aa
+    ref = out["go_list_cost"]
+    out["mismatch"] = bool(abs(out["go_expected"] - ref) > tol * max(abs(ref), 1e-12)) if ref else bool(out["go_expected"] > 1e-9)
+    return out
+
+
+def merge_reports(reports, tol: float = 0.02) -> dict:
+    """Sum of evaluation_costs() reports (e.g. per-question reports of a resumed evaluation)."""
+    out = {"aa_cost": 0.0, "go_expected": 0.0, "go_list_cost": 0.0, "go_allowance": 0.0, "n_calls": 0, "n_unpriced": 0, "per_role": {}}
+    for rep in reports:
+        for k in ("aa_cost", "go_expected", "go_list_cost", "go_allowance", "n_calls", "n_unpriced"):
+            out[k] += rep.get(k) or 0
+        for role, d in (rep.get("per_role") or {}).items():
+            o = out["per_role"].setdefault(role, {"model": d.get("model"), "calls": 0, "input": 0, "cache_read": 0, "cache_write": 0,
+                                                  "output": 0, "aa_cost": 0.0})
+            for k in ("calls", "input", "cache_read", "cache_write", "output", "aa_cost"):
+                o[k] += d.get(k) or 0
     ref = out["go_list_cost"]
     out["mismatch"] = bool(abs(out["go_expected"] - ref) > tol * max(abs(ref), 1e-12)) if ref else bool(out["go_expected"] > 1e-9)
     return out
