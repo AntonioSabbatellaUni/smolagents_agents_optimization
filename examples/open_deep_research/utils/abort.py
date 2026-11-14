@@ -1,13 +1,7 @@
-"""Process-wide 'pause' switch for an evaluation (revival).
-
-When an infrastructure problem makes further calls pointless or the results untrustworthy (Go quota / rate limit that survives the
-retries, auth/billing errors, provider 5xx / connection errors after retries, web search blocked after retries), `trigger()` records
-the reason once and every later LLM call (`check()`, called by llm_logger before each request) raises InfraAbort at once, so all
-running questions stop within one step. Questions whose thread saw an InfraAbort are recorded in `failed_tasks` and are NOT counted:
-the evaluation is paused (EvaluationPaused) and resumed later from the per-question cache.
-
-kind: 'quota' (429 / quota text: model-specific, other models may still work) | 'infra' (anything else: global).
-"""
+"""Process-wide 'pause' switch. `trigger()` records the first infra problem (quota / auth / provider down / search blocked) and every
+later LLM call (`check()`) raises InfraAbort, so running questions stop within one step. Those questions land in `failed_tasks`, are not
+counted, and the evaluation is paused (EvaluationPaused) and resumed later from the question cache.
+kind: 'quota' (model-specific) | 'account_limit' (every model) | 'infra' (global)."""
 import threading
 from datetime import datetime, timezone
 

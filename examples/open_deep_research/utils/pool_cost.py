@@ -22,6 +22,12 @@ def is_peak(ts_start: str) -> bool:
     return t.weekday() < 5 and (1 <= t.hour < 4 or 6 <= t.hour < 10)
 
 
+def _with_mismatch(out: dict, tol: float) -> dict:
+    ref = out["go_list_cost"]
+    out["mismatch"] = bool(abs(out["go_expected"] - ref) > tol * max(abs(ref), 1e-12)) if ref else bool(out["go_expected"] > 1e-9)
+    return out
+
+
 def _tokens(usage: dict):
     raw = (usage or {}).get("raw") or {}
     oc = raw.get("opencode") or {}
@@ -65,9 +71,7 @@ def evaluation_costs(jsonl_path, prices: dict, tol: float = 0.02, task_ids=None,
         out["aa_cost"] += aa; out["go_expected"] += go; out["go_list_cost"] += lc; out["go_allowance"] += al
         d = out["per_role"].setdefault(role, {"model": pr.get("name"), "calls": 0, "input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "aa_cost": 0.0})
         d["calls"] += 1; d["input"] += i; d["cache_read"] += c; d["cache_write"] += w; d["output"] += o; d["aa_cost"] += aa
-    ref = out["go_list_cost"]
-    out["mismatch"] = bool(abs(out["go_expected"] - ref) > tol * max(abs(ref), 1e-12)) if ref else bool(out["go_expected"] > 1e-9)
-    return out
+    return _with_mismatch(out, tol)
 
 
 def merge_reports(reports, tol: float = 0.02) -> dict:
@@ -81,6 +85,4 @@ def merge_reports(reports, tol: float = 0.02) -> dict:
                                                   "output": 0, "aa_cost": 0.0})
             for k in ("calls", "input", "cache_read", "cache_write", "output", "aa_cost"):
                 o[k] += d.get(k) or 0
-    ref = out["go_list_cost"]
-    out["mismatch"] = bool(abs(out["go_expected"] - ref) > tol * max(abs(ref), 1e-12)) if ref else bool(out["go_expected"] > 1e-9)
-    return out
+    return _with_mismatch(out, tol)

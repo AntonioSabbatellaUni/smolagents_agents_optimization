@@ -16,6 +16,7 @@ from datetime import datetime
 from loader import load_agent_models
 from utils import EnhancedRunManager
 from utils.cost_estimator import CostEstimator
+from utils.pool_cost import evaluation_costs, merge_reports
 from utils.subset_evaluation import create_deterministic_subset, calculate_final_metrics
 from run_gaia_subset_enhanced import load_gaia_dataset, answer_single_question_with_tracking
 
@@ -194,14 +195,12 @@ class GaiaOptimizationInterface:
             kept = [r for r in results if r["task_id"] not in failed]
             per_q = {}
             if prices and log_path.exists():
-                from utils.pool_cost import evaluation_costs
                 per_q = {r["task_id"]: evaluation_costs(log_path, prices, task_ids={r["task_id"]}) for r in kept}
             if abort.reason() is not None:
                 qcache.save(kept, per_q, str(session_dir))
                 rep = {"reason": abort.reason(), "kept": len(kept), "failed_task_ids": sorted(failed),
                        "n_done_total": len(cached) + len(kept), "n_total": len(subset_questions)}
                 if prices and log_path.exists():
-                    from utils.pool_cost import evaluation_costs
                     rep["session_cost"] = evaluation_costs(log_path, prices)
                     rep["wasted_cost"] = evaluation_costs(log_path, prices, task_ids=failed)   # spent on questions that will be redone
                 (Path(session_dir) / "paused_report.json").write_text(json.dumps(rep, indent=1, default=str))
@@ -223,7 +222,6 @@ class GaiaOptimizationInterface:
             total_cost = None
             if prices:
                 try:
-                    from utils.pool_cost import evaluation_costs, merge_reports
                     rep = evaluation_costs(log_path, prices)
                     if cached:   # resumed: earlier questions' costs (their own sessions) + this session's calls
                         rep = merge_reports([c["cost_report"] for c in cached.values()] + [rep])

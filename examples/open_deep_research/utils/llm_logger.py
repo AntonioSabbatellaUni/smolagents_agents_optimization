@@ -1,15 +1,6 @@
-"""Single-point logging of EVERY LiteLLM request/response (revival).
-
-`install()` monkeypatches `litellm.completion` once, so every agent/tool that goes through LiteLLM is covered
-(smolagents LiteLLMModel calls `self.client.completion`, and `self.client` is the litellm module).
-One JSONL line per call -> <session dir>/llm_calls.jsonl (set with `set_log_path`, or env MALBO_LLM_LOG).
-
-Also injects extra headers from env MALBO_EXTRA_HEADERS (JSON dict; e.g. {"x-opencode-session": "malbo-gaia-20261112"})
-and sets a placeholder price (env MALBO_PRICE_IN / MALBO_PRICE_OUT, USD per 1M tokens) for the `cost` field.
-
-Context (agent role / task id) is thread-local: TrackedModel calls `set_agent`, the evaluator calls `set_task`.
-Secrets: Authorization/api_key/cookie headers are dropped and any known secret value is scrubbed from the line.
-"""
+"""Logs EVERY LiteLLM request/response: `install()` wraps `litellm.completion` once (retries, stop/tool_choice fallbacks, pause on
+quota/infra errors). One JSONL line per call -> llm_calls.jsonl (`set_log_path`, or env MALBO_LLM_LOG). Env: MALBO_EXTRA_HEADERS (JSON),
+MALBO_PRICE_IN / MALBO_PRICE_OUT (placeholder cost). Agent role / task id are thread-local. Secrets are dropped/scrubbed."""
 import json
 import os
 import re
@@ -74,27 +65,20 @@ def _jsonable(o):
 
 
 def _clean_headers(h):
-    out = {}
-    for k, v in (h or {}).items():
-        if str(k).lower() in _DROP_HEADERS:
-            continue
-        out[str(k)] = v
-    return out
+    return {str(k): v for k, v in (h or {}).items() if str(k).lower() not in _DROP_HEADERS}
 
 
 def _rate_headers(h):
     return {k: v for k, v in (h or {}).items() if str(k).lower().startswith(_RL_PREFIXES)}
 
 
-def _price(model):
-    pin = float(os.getenv("MALBO_PRICE_IN", "0.10"))
-    pout = float(os.getenv("MALBO_PRICE_OUT", "0.50"))
-    return pin, pout
+def _log_path():
+    return _state["path"] or (Path(os.environ["MALBO_LLM_LOG"]) if os.getenv("MALBO_LLM_LOG") else None)
 
 
 def _write(rec):
     line = _scrub(json.dumps(rec, ensure_ascii=False, default=str))
-    path = _state["path"] or (Path(os.environ["MALBO_LLM_LOG"]) if os.getenv("MALBO_LLM_LOG") else None)
+    path = _log_path()
     if path is None:
         return
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +92,7 @@ def log_event(kind, **fields):
            "agent": getattr(_ctx, "agent", None), "task_id": getattr(_ctx, "task_id", None), **fields}
     line = _scrub(json.dumps(rec, ensure_ascii=False, default=str))
     print(f"[retry] {line}")
-    path = _state["path"] or (Path(os.environ["MALBO_LLM_LOG"]) if os.getenv("MALBO_LLM_LOG") else None)
+    path = _log_path()
     if path is None:
         return
     try:
@@ -147,7 +131,7 @@ def _record(kwargs, t0, t1, ttft, resp, err, streamed=False, attempt=1, will_ret
     choice = ((rd or {}).get("choices") or [{}])[0] if rd else {}
     msg = choice.get("message") or {}
     usage = _usage(rd)
-    pin, pout = _price(kwargs.get("model"))
+    pin, pout = float(os.getenv("MALBO_PRICE_IN", "0.10")), float(os.getenv("MALBO_PRICE_OUT", "0.50"))
     lat = t1 - t0
     pt, ct = usage["prompt_tokens"] or 0, usage["completion_tokens"] or 0
     hidden = getattr(resp, "_hidden_params", None) or {}

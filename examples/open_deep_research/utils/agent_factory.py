@@ -198,11 +198,6 @@ def create_gaia_dataset_loader(use_raw_dataset: bool, set_to_run: str):
                 ignore_patterns=[".gitattributes", "README.md"],
             )
 
-    def preprocess_file_paths(row):
-        if len(row["file_name"]) > 0:
-            row["file_name"] = f"data/gaia/{set_to_run}/" + row["file_name"]
-        return row
-
     # revival: GAIA.py (script dataset) is unsupported by datasets>=4 -> read metadata.jsonl directly
     import datasets
     import json as _json
@@ -217,10 +212,7 @@ def create_gaia_dataset_loader(use_raw_dataset: bool, set_to_run: str):
     else:
         rows = [_json.loads(l) for l in meta.read_text().splitlines() if l.strip()]
     for r in rows:
-        r.setdefault("file_name", "")
-        r["file_name"] = r["file_name"] or ""
-        if r["file_name"]:
-            r["file_name"] = str(meta.parent / r["file_name"])
+        r["file_name"] = str(meta.parent / r["file_name"]) if r.get("file_name") else ""
         r["task"] = str(r.pop("Level")); r["question"] = r.pop("Question"); r["true_answer"] = r.pop("Final answer")
         r.pop("Annotator Metadata", None)
     return datasets.Dataset.from_list(rows)
