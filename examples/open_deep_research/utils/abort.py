@@ -38,9 +38,21 @@ def reset():
         _state["failed_tasks"] = set()
 
 
+def resets_in_s(err):
+    """'... usage limit reached (5-hour, resets in 4h 53m) ...' -> seconds (None if absent)."""
+    import re
+    m = re.search(r"resets in\s*(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?", f"{err}", re.I)
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi = (int(x or 0) for x in m.groups())
+    return d * 86400 + h * 3600 + mi * 60
+
+
 def classify(err) -> str:
     st = getattr(err, "status_code", None)
     s = f"{type(err).__name__} {err}".lower()
+    if "go usage limit reached" in s:   # OpenCode Go account-wide window (5-hour / weekly / monthly): every model is blocked
+        return "account_limit"
     if st in (402, 429) or type(err).__name__ == "RateLimitError" or any(t in s for t in _QUOTA_TEXT):
         return "quota"
     return "infra"
@@ -58,7 +70,7 @@ def trigger(source: str, model, err, task_id=None, kind=None):
         if task_id is not None:
             _state["failed_tasks"].add(task_id)
         if _state["reason"] is None:
-            _state["reason"] = {"kind": kind or classify(err), "source": source, "model": model,
+            _state["reason"] = {"kind": kind or classify(err), "source": source, "model": model, "resets_in_s": resets_in_s(err),
                                 "status": getattr(err, "status_code", None), "error": f"{type(err).__name__}: {err}"[:500],
                                 "task_id": task_id, "ts": datetime.now(timezone.utc).isoformat()}
             print(f"⏸️  PAUSE triggered by {source} ({_state['reason']['kind']}, model={model}): {_state['reason']['error'][:200]}")
