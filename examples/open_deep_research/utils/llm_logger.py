@@ -188,6 +188,10 @@ def install():
                 kwargs["extra_headers"] = json.loads(eh)
             except Exception:
                 pass
+            sid = kwargs["extra_headers"].get("x-opencode-session") if kwargs.get("extra_headers") else None
+            if sid and getattr(_ctx, "task_id", None):   # Go routes/caches per session: one stable id per conversation
+                kwargs["extra_headers"] = {**kwargs["extra_headers"],
+                                           "x-opencode-session": f"{sid}:{_ctx.task_id}:{getattr(_ctx, 'agent', '')}"}
         from . import retry as _retry
         if kwargs.get("model") in _NO_STOP:
             kwargs.pop("stop", None)
