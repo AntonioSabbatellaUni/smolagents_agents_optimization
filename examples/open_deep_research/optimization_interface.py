@@ -5,6 +5,7 @@ Designed to be used by optimization loops (BoTorch, Optuna, etc.).
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
@@ -38,6 +39,9 @@ def select_by_task_ids(eval_ds, path: str):
     return [rows[i] for i in ids]
 
 
+_QCACHE_LOCK = threading.Lock()
+
+
 class QuestionCache:
     """<MALBO_QCACHE_DIR>/<key>.jsonl: one line per completed question {task_id, result, cost_report, session_dir}, key = hash of the
     role -> (model_id, reasoning_effort, pool option) mapping + the task list. Disabled (no-op) when MALBO_QCACHE_DIR is unset."""
@@ -68,7 +72,7 @@ class QuestionCache:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.with_suffix(".config.json").exists():
             self.path.with_suffix(".config.json").write_text(json.dumps(self.sig, indent=1))
-        with open(self.path, "a") as f:
+        with _QCACHE_LOCK, open(self.path, "a") as f:   # questions finish in parallel threads
             for r in results:
                 f.write(json.dumps({"task_id": r["task_id"], "result": r, "cost_report": per_q_costs.get(r["task_id"]) or {},
                                     "session_dir": session_dir, "ts": datetime.now().isoformat()}, default=str) + "\n")
@@ -142,6 +146,8 @@ class GaiaOptimizationInterface:
 
             from utils import abort
             abort.reset()
+            import socket
+            socket.setdefaulttimeout(120)   # agent code / tools calling requests without timeout hung questions forever
             from utils import llm_logger as _ll
             for k in [k for k in _ll._state["counters"] if k and k[0] == "bad_request"]:
                 del _ll._state["counters"][k]   # repeated-400 detector counts per evaluation
@@ -176,6 +182,10 @@ class GaiaOptimizationInterface:
                 except Exception as e:  # answer_single_question already catches; belt and braces
                     r = stub(example, i, str(e))
                 progress.finish(i, example["task_id"], r)
+                if abort.reason() is None and not r.get("agent_error") and prices:   # saved at once: a kill/crash loses no finished question
+                    log = Path(session_dir) / "llm_calls.jsonl"
+                    if log.exists():
+                        qcache.save([r], {r["task_id"]: evaluation_costs(log, prices, task_ids={r["task_id"]})}, str(session_dir))
                 return r
 
             if not parallel:
