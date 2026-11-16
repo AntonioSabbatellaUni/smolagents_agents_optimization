@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 
 _lock = threading.Lock()
-_state = {"reason": None, "failed_tasks": set()}
+_state = {"reason": None, "failed_tasks": set(), "cancelled": set()}
 
 _QUOTA_TEXT = ("quota", "usage limit", "limit exceeded", "exceeded your", "insufficient", "credit", "billing", "allowance",
                "monthly limit", "spend limit", "rate limit", "ratelimit", "too many requests")
@@ -30,6 +30,13 @@ def reset():
     with _lock:
         _state["reason"] = None
         _state["failed_tasks"] = set()
+        _state["cancelled"] = set()
+
+
+def cancel(task_id):
+    """Question over its time limit: its (abandoned) thread stops at its next LLM call."""
+    with _lock:
+        _state["cancelled"].add(task_id)
 
 
 def resets_in_s(err):
@@ -77,6 +84,8 @@ def mark_failed(task_id):
 
 
 def check(task_id=None):
+    if task_id in _state["cancelled"]:
+        raise InfraAbort("question timed out")
     if _state["reason"] is not None:
         mark_failed(task_id)
         raise InfraAbort(f"evaluation paused: {_state['reason']['error'][:200]}")

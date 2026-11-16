@@ -40,6 +40,7 @@ def select_by_task_ids(eval_ds, path: str):
 
 
 _QCACHE_LOCK = threading.Lock()
+QUESTION_TIMEOUT_S = 1800   # counted as a wrong answer, like an agent that never answers
 
 
 class QuestionCache:
@@ -171,21 +172,34 @@ class GaiaOptimizationInterface:
                         "parsing_error": False, "iteration_limit_exceeded": False, "agent_error": err,
                         "duration_seconds": 0, "token_counts": {"input": 0, "output": 0}}
 
+            saved = set()   # task ids already written to the question cache
+
             def run_one(example, i):
                 if abort.reason() is not None:   # paused before this question started: do not even build the team
                     abort.mark_failed(example["task_id"])
                     return stub(example, i, "not run: evaluation paused")
                 progress.start(i, example["task_id"])
-                try:
-                    r = answer_single_question_with_tracking(example, models, run_manager, retry_config, i,
-                                                             models_factory=factory, parallel=parallel)
-                except Exception as e:  # answer_single_question already catches; belt and braces
-                    r = stub(example, i, str(e))
+                box = {}
+
+                def answer():
+                    try:
+                        box["r"] = answer_single_question_with_tracking(example, models, run_manager, retry_config, i,
+                                                                        models_factory=factory, parallel=parallel)
+                    except Exception as e:  # answer_single_question already catches; belt and braces
+                        box["r"] = stub(example, i, str(e))
+                # wall-clock limit: agent code can block on the network forever (seen: urlopen to a tarpitting site)
+                t = threading.Thread(target=answer, daemon=True)
+                t.start(); t.join(QUESTION_TIMEOUT_S)
+                if t.is_alive():
+                    abort.cancel(example["task_id"])
+                    box["r"] = {**stub(example, i, f"question timeout {QUESTION_TIMEOUT_S}s"), "duration_seconds": QUESTION_TIMEOUT_S}
+                r = box["r"]
                 progress.finish(i, example["task_id"], r)
                 if abort.reason() is None and not r.get("agent_error") and prices:   # saved at once: a kill/crash loses no finished question
                     log = Path(session_dir) / "llm_calls.jsonl"
                     if log.exists():
                         qcache.save([r], {r["task_id"]: evaluation_costs(log, prices, task_ids={r["task_id"]})}, str(session_dir))
+                        saved.add(r["task_id"])
                 return r
 
             if not parallel:
@@ -207,7 +221,7 @@ class GaiaOptimizationInterface:
             if prices and log_path.exists():
                 per_q = {r["task_id"]: evaluation_costs(log_path, prices, task_ids={r["task_id"]}) for r in kept}
             if abort.reason() is not None:
-                qcache.save(kept, per_q, str(session_dir))
+                qcache.save([r for r in kept if r["task_id"] not in saved], per_q, str(session_dir))
                 rep = {"reason": abort.reason(), "kept": len(kept), "failed_task_ids": sorted(failed),
                        "n_done_total": len(cached) + len(kept), "n_total": len(subset_questions)}
                 if prices and log_path.exists():
@@ -218,7 +232,7 @@ class GaiaOptimizationInterface:
                       f"{len(failed)} to redo; wasted go_list ${rep.get('wasted_cost', {}).get('go_list_cost', 0):.4f}")
                 raise abort.EvaluationPaused(abort.reason(), len(cached) + len(kept), len(subset_questions), str(Path(session_dir).resolve()))
             if cached:
-                qcache.save(kept, per_q, str(session_dir))   # so a crash before MALBO logs the result does not lose them
+                qcache.save([r for r in kept if r["task_id"] not in saved], per_q, str(session_dir))   # so a crash before MALBO logs the result does not lose them
             results = [c["result"] for c in cached.values()] + results
             results.sort(key=lambda r: r.get("question_index", 0))
 
