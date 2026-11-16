@@ -1,6 +1,7 @@
 """Logs EVERY LiteLLM request/response: `install()` wraps `litellm.completion` once (retries, stop/tool_choice fallbacks, pause on
 quota/infra errors). One JSONL line per call -> llm_calls.jsonl (`set_log_path`, or env MALBO_LLM_LOG). Env: MALBO_EXTRA_HEADERS (JSON),
 MALBO_PRICE_IN / MALBO_PRICE_OUT (placeholder cost). Agent role / task id are thread-local. Secrets are dropped/scrubbed."""
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,15 @@ _RL_PREFIXES = ("x-ratelimit", "ratelimit", "retry-after", "x-opencode", "openco
 
 _NO_STOP = set()  # models that reject the `stop` param (learned at run time)
 _AUTO_TOOL_CHOICE = set()  # models that only accept tool_choice="auto" (e.g. muse-spark), learned at run time
+
+
+def _prompt_kind(kwargs):
+    """Short hash of the first message: planning and normal steps start differently, so each keeps its own cache."""
+    msgs = kwargs.get("messages") or []
+    c = msgs[0].get("content", "") if msgs and isinstance(msgs[0], dict) else ""
+    if isinstance(c, list):
+        c = "".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return hashlib.sha1(str(c)[:200].encode()).hexdigest()[:8]
 
 
 def set_log_path(path):
@@ -191,7 +201,7 @@ def install():
             sid = kwargs["extra_headers"].get("x-opencode-session") if kwargs.get("extra_headers") else None
             if sid and getattr(_ctx, "task_id", None):   # Go routes/caches per session: one stable id per conversation
                 kwargs["extra_headers"] = {**kwargs["extra_headers"],
-                                           "x-opencode-session": f"{sid}:{_ctx.task_id}:{getattr(_ctx, 'agent', '')}"}
+                                           "x-opencode-session": f"{sid}:{_ctx.task_id}:{getattr(_ctx, 'agent', '')}:{_prompt_kind(kwargs)}"}
         from . import retry as _retry
         if kwargs.get("model") in _NO_STOP:
             kwargs.pop("stop", None)
