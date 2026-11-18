@@ -22,7 +22,7 @@ _RL_PREFIXES = ("x-ratelimit", "ratelimit", "retry-after", "x-opencode", "openco
                 "llm_provider-ratelimit", "llm_provider-retry-after", "llm_provider-x-opencode", "llm_provider-opencode")
 
 
-_NO_STOP = set()  # models that reject the `stop` param (learned at run time)
+_NO_STOP = {"openai/gpt-6-luna", "openai/muse-spark-1.3-contributor"}  # models that reject the `stop` param (known from preflight; more learned at run time)
 _AUTO_TOOL_CHOICE = set()  # models that only accept tool_choice="auto" (e.g. muse-spark), learned at run time
 
 
