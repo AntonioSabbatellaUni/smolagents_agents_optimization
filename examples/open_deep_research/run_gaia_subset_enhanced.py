@@ -35,7 +35,7 @@ from utils.agent_factory import (
 from utils.cost_estimator import CostEstimator
 
 
-load_dotenv(override=True)
+load_dotenv()   # do not override the env given to the container (e.g. a second Go key)
 if os.getenv("HF_TOKEN"):
     login(os.getenv("HF_TOKEN"))
 

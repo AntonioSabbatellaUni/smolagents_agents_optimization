@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from smolagents import Tool, tool
 
 
-load_dotenv(override=True)
+load_dotenv()   # keep the env given to the container (driver key switch)
 
 
 # Function to encode the image

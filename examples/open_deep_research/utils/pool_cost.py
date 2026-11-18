@@ -49,7 +49,10 @@ def evaluation_costs(jsonl_path, prices: dict, tol: float = 0.02, task_ids=None,
     for line in p.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        r = json.loads(line)
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:   # line still being written by another question's thread
+            continue
         if r.get("error") or not r.get("usage"):
             continue
         if task_ids is not None and r.get("task_id") not in task_ids:
