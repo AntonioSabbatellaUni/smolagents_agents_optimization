@@ -118,9 +118,22 @@ def _scaled_number(s: str):
     return float(m.group(1).replace(",", "")) * _SCALES[m.group(2)] if m else None
 
 
+# Accepted alternative answers, reviewed by hand (ground truth -> other names of the same thing). Keep this list short and
+# documented: each entry is a judgment call, see notes/2026-11-18_go3v3_cheap20_scoring_observations.md.
+ANSWER_ALIASES = {
+    "Russian-German Legion": ["Russo-German Legion"],   # GAIA 2023 validation, Whitney 2022.128 question: same unit, both English names
+}
+
+
 def relaxed_question_scorer(model_answer, ground_truth) -> bool:
-    """Official GAIA question_scorer after formatting normalization (dashes, quotes, numbers with a scale word).
-    The whole answer is scored: text after the answer still makes it wrong. Never raises, prints or warns."""
+    """Official GAIA question_scorer after formatting normalization (dashes, quotes, numbers with a scale word), also
+    accepting the hand-reviewed ANSWER_ALIASES. The whole answer is scored: text after the answer still makes it wrong.
+    Never raises, prints or warns."""
+    gt = normalize_answer_text(ground_truth)
+    return any(_relaxed_one(model_answer, alt) for alt in [gt] + ANSWER_ALIASES.get(gt, []))
+
+
+def _relaxed_one(model_answer, ground_truth) -> bool:
     import contextlib, io
     pred, gt = normalize_answer_text(model_answer or ""), normalize_answer_text(ground_truth)
     if is_float(gt) and _scaled_number(pred) is not None:
@@ -147,7 +160,7 @@ def rescore(result: dict) -> dict:
     pred, gt = result.get("prediction"), str(result.get("true_answer", ""))
     exact = result.get("is_correct_exact", result.get("is_correct", False))
     return {**result, "is_correct_exact": bool(exact), "is_correct": relaxed_question_scorer(pred, gt),
-            "is_correct_first_line": relaxed_question_scorer(first_line(pred), gt), "scorer": "relaxed_v1"}
+            "is_correct_first_line": relaxed_question_scorer(first_line(pred), gt), "scorer": "relaxed_v2"}
 
 
 def normalize_str(input_str, remove_punct=True) -> str:
