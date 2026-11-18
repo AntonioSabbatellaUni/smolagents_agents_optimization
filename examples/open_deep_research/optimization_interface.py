@@ -235,6 +235,9 @@ class GaiaOptimizationInterface:
                 qcache.save([r for r in kept if r["task_id"] not in saved], per_q, str(session_dir))   # so a crash before MALBO logs the result does not lose them
             results = [c["result"] for c in cached.values()] + results
             results.sort(key=lambda r: r.get("question_index", 0))
+            if os.getenv("MALBO_SCORER", "exact") == "relaxed":   # also rescores cached questions, so every result uses one scorer
+                from scripts.gaia_scorer import rescore
+                results = [rescore(r) for r in results]
 
             # Calculate metrics and agent-specific cost breakdown
             final_metrics = calculate_final_metrics(results)

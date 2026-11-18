@@ -101,6 +101,55 @@ def check_close_call(prediction, true_answer, is_correct):
                 return False
 
 
+_DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−"), "-")
+_QUOTES = {ord("‘"): "'", ord("’"): "'", ord("“"): '"', ord("”"): '"'}
+_SCALES = {"thousand": 1e3, "million": 1e6, "billion": 1e9, "trillion": 1e12}
+
+
+def normalize_answer_text(s: str) -> str:
+    """Unicode NFKC, every dash -> '-', curly quotes -> straight. Formatting only, the answer itself is not changed."""
+    import unicodedata
+    return unicodedata.normalize("NFKC", str(s)).translate(_DASHES).translate(_QUOTES).strip()
+
+
+def _scaled_number(s: str):
+    """'100 million' -> 100000000.0, '1.5 billion' -> 1500000000.0; None if not '<number> <scale word>'."""
+    m = re.fullmatch(r"\s*\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(thousand|million|billion|trillion)\s*", s.lower())
+    return float(m.group(1).replace(",", "")) * _SCALES[m.group(2)] if m else None
+
+
+def relaxed_question_scorer(model_answer, ground_truth) -> bool:
+    """Official GAIA question_scorer after formatting normalization (dashes, quotes, numbers with a scale word).
+    The whole answer is scored: text after the answer still makes it wrong. Never raises, prints or warns."""
+    import contextlib, io
+    pred, gt = normalize_answer_text(model_answer or ""), normalize_answer_text(ground_truth)
+    if is_float(gt) and _scaled_number(pred) is not None:
+        return _scaled_number(pred) == float(gt)
+    with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            return bool(question_scorer(pred, gt))
+        except Exception:
+            return False
+
+
+def first_line(prediction) -> str:
+    """Text after a 'FINAL ANSWER:' marker if present, else the first non-empty line (comparison column only)."""
+    p = str(prediction or "")
+    m = re.search(r"final answer\s*:\s*(.+)", p, re.I)
+    if m:
+        return m.group(1).strip().splitlines()[0]
+    return next((l.strip() for l in p.splitlines() if l.strip()), "")
+
+
+def rescore(result: dict) -> dict:
+    """Add the three scores to a per-question result; `is_correct` becomes the relaxed score (exact match kept as is_correct_exact)."""
+    pred, gt = result.get("prediction"), str(result.get("true_answer", ""))
+    exact = result.get("is_correct_exact", result.get("is_correct", False))
+    return {**result, "is_correct_exact": bool(exact), "is_correct": relaxed_question_scorer(pred, gt),
+            "is_correct_first_line": relaxed_question_scorer(first_line(pred), gt), "scorer": "relaxed_v1"}
+
+
 def normalize_str(input_str, remove_punct=True) -> str:
     """
     Normalize a string by:
